@@ -101,7 +101,8 @@ class UserProfile(Base):
     timezone = Column(String(50), default="UTC")
     language = Column(String(10), default="en")
     preferences = Column(JSONB, default={})
-    selected_theme = Column(String(50), default="sun")
+    selected_theme = Column(String(50), default="sun")  # Legacy field, kept for backwards compatibility
+    appearance_option_value_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
     onboarding_completed = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -124,6 +125,7 @@ class UserProfile(Base):
             "language": self.language,
             "preferences": self.preferences,
             "selected_theme": self.selected_theme,
+            "appearance_option_value_id": self.appearance_option_value_id,
             "onboarding_completed": self.onboarding_completed,
         }
 
