@@ -105,17 +105,18 @@ async def init_database():
     try:
         # Test database connection
         async with engine.begin() as conn:
-            # Import user models to register them with Base (Phase 2)
+            # Phase 2: Import user models to register them with Base
             try:
                 from models.user import User, Session, UserProfile, LoginAttempt
                 logger.info("User models imported successfully")
             except ImportError as e:
-                logger.warning("Could not import user models - will be added in Phase 2", error=str(e))
+                logger.error("Could not import user models", error=str(e))
+                raise
             
             # Create all tables
             await conn.run_sync(Base.metadata.create_all)
             
-        logger.info("Database connection established", url=DATABASE_URL[:50] + "...")
+        logger.info("Database connection established and tables created", url=DATABASE_URL[:50] + "...")
         return True
         
     except Exception as e:
