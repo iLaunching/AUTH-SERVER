@@ -373,10 +373,10 @@ async def signup(signup_data: SignupRequest, request: Request):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Signup failed", email=email, error=str(e))
+            logger.error("Signup failed", email=email, error=str(e), exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail="Signup failed. Please try again."
+                detail=f"Signup failed: {str(e)}"
             )
     
     # Phase 1: Fallback to in-memory storage
