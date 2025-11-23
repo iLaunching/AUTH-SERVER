@@ -1,5 +1,24 @@
-# Minimal dependencies for auth API
+# Auth API Dependencies - Phase 1: Database Foundation
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-pydantic==2.5.0
-email-validator==2.1.0
+pydantic==2.9.0
+email-validator==2.2.0
+
+# Phase 1: Database & ORM
+sqlalchemy==2.0.23
+asyncpg==0.29.0
+alembic==1.13.0
+
+# Phase 1: Redis for caching
+redis==5.0.1
+
+# Phase 1: Authentication & Security
+PyJWT==2.8.0
+bcrypt==4.1.2
+passlib[bcrypt]==1.7.4
+
+# Phase 1: Logging & Monitoring
+structlog==23.2.0
+
+# Phase 1: HTTP Client
+httpx==0.25.2
