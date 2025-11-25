@@ -25,6 +25,7 @@ class OAuthService:
         self.oauth = OAuth()
         self._setup_google()
         self._setup_facebook()
+        self._setup_microsoft()
     
     def _setup_google(self):
         """Setup Google OAuth provider"""
@@ -71,6 +72,26 @@ class OAuthService:
                 logger.error("Failed to setup Facebook OAuth", error=str(e))
         else:
             logger.warning("Facebook OAuth not configured - skipping setup")
+    
+    def _setup_microsoft(self):
+        """Setup Microsoft OAuth provider"""
+        if OAuthConfig.is_microsoft_configured():
+            try:
+                self.oauth.register(
+                    name='microsoft',
+                    client_id=OAuthConfig.MICROSOFT_CLIENT_ID,
+                    client_secret=OAuthConfig.MICROSOFT_CLIENT_SECRET,
+                    authorize_url=OAuthConfig.MICROSOFT_AUTHORIZE_URL,
+                    access_token_url=OAuthConfig.MICROSOFT_TOKEN_URL,
+                    client_kwargs={
+                        'scope': ' '.join(OAuthConfig.MICROSOFT_SCOPES),
+                    }
+                )
+                logger.info("Microsoft OAuth provider configured successfully")
+            except Exception as e:
+                logger.error("Failed to setup Microsoft OAuth", error=str(e))
+        else:
+            logger.warning("Microsoft OAuth not configured - skipping setup")
     
     def get_google_auth_url(self, redirect_uri: str, state: str) -> str:
         """
@@ -253,6 +274,96 @@ class OAuthService:
                 return user_info
             except httpx.HTTPError as e:
                 logger.error("Failed to fetch Facebook user info", error=str(e))
+                raise ValueError(f"Failed to fetch user info: {str(e)}")
+    
+    def get_microsoft_auth_url(self, redirect_uri: str, state: str) -> str:
+        """
+        Generate Microsoft OAuth authorization URL
+        
+        Args:
+            redirect_uri: Where Microsoft should redirect after authentication
+            state: Random state for CSRF protection
+            
+        Returns:
+            Authorization URL string
+        """
+        if not OAuthConfig.is_microsoft_configured():
+            raise ValueError("Microsoft OAuth is not configured")
+        
+        params = {
+            'client_id': OAuthConfig.MICROSOFT_CLIENT_ID,
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'response_mode': 'query',
+            'scope': ' '.join(OAuthConfig.MICROSOFT_SCOPES),
+            'state': state,
+        }
+        
+        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        auth_url = f"{OAuthConfig.MICROSOFT_AUTHORIZE_URL}?{query_string}"
+        
+        logger.info("Generated Microsoft auth URL", state=state)
+        return auth_url
+    
+    async def exchange_microsoft_code(self, code: str, redirect_uri: str) -> Dict:
+        """
+        Exchange Microsoft authorization code for access token
+        
+        Args:
+            code: Authorization code from Microsoft
+            redirect_uri: Redirect URI used in the initial request
+            
+        Returns:
+            Token response from Microsoft
+        """
+        if not OAuthConfig.is_microsoft_configured():
+            raise ValueError("Microsoft OAuth is not configured")
+        
+        token_data = {
+            'code': code,
+            'client_id': OAuthConfig.MICROSOFT_CLIENT_ID,
+            'client_secret': OAuthConfig.MICROSOFT_CLIENT_SECRET,
+            'redirect_uri': redirect_uri,
+            'grant_type': 'authorization_code',
+        }
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    OAuthConfig.MICROSOFT_TOKEN_URL,
+                    data=token_data,
+                    headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                )
+                response.raise_for_status()
+                token_response = response.json()
+                logger.info("Successfully exchanged Microsoft code for token")
+                return token_response
+            except httpx.HTTPError as e:
+                logger.error("Failed to exchange Microsoft code", error=str(e))
+                raise ValueError(f"Failed to exchange authorization code: {str(e)}")
+    
+    async def get_microsoft_user_info(self, access_token: str) -> Dict:
+        """
+        Get user information from Microsoft using access token
+        
+        Args:
+            access_token: Microsoft access token
+            
+        Returns:
+            User information from Microsoft
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    OAuthConfig.MICROSOFT_USERINFO_URL,
+                    headers={'Authorization': f'Bearer {access_token}'}
+                )
+                response.raise_for_status()
+                user_info = response.json()
+                logger.info("Successfully fetched Microsoft user info", email=user_info.get('mail') or user_info.get('userPrincipalName'))
+                return user_info
+            except httpx.HTTPError as e:
+                logger.error("Failed to fetch Microsoft user info", error=str(e))
                 raise ValueError(f"Failed to fetch user info: {str(e)}")
     
     async def process_oauth_user(

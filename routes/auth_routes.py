@@ -16,6 +16,7 @@ from models.user import User, Session as UserSession, LoginAttempt, UserProfile
 from auth.jwt_manager import JWTManager
 from auth.password_handler import PasswordHandler
 from config.database import get_db
+from services.email_service import email_service
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -61,6 +62,20 @@ class TokenResponse(BaseModel):
     """Response model for token refresh"""
     access_token: str
     token_type: str = "Bearer"
+
+class SendVerificationCodeRequest(BaseModel):
+    """Request model for sending verification code"""
+    email: EmailStr
+
+class VerifyCodeRequest(BaseModel):
+    """Request model for verifying code"""
+    email: EmailStr
+    code: str = Field(..., min_length=6, max_length=6)
+
+class VerifyCodeResponse(BaseModel):
+    """Response model for code verification"""
+    verified: bool
+    message: str
 
 # ============================================
 # Helper Functions
@@ -201,7 +216,8 @@ async def signup(
             email=email,
             password_hash=password_hash,
             first_name=signup_data.first_name,
-            last_name=signup_data.last_name
+            last_name=signup_data.last_name,
+            email_verified=True  # Mark as verified since they completed email verification
         )
         db.add(new_user)
         await db.flush()  # Get user ID without committing
@@ -576,6 +592,98 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed",
             headers={"WWW-Authenticate": "Bearer"}
+        )
+
+
+# ============================================
+# Email Verification Endpoints
+# ============================================
+
+@router.post("/auth/send-verification-code")
+async def send_verification_code(
+    request_data: SendVerificationCodeRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Send a verification code to the user's email.
+    Used during signup to verify email ownership.
+    """
+    try:
+        email = request_data.email.lower()
+        
+        # Check if email already exists
+        result = await db.execute(
+            select(User).where(User.email == email)
+        )
+        existing_user = result.scalar_one_or_none()
+        
+        if existing_user and existing_user.email_verified:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered and verified. Please login instead."
+            )
+        
+        # Generate and store verification code
+        code = email_service.generate_verification_code()
+        email_service.store_verification_code(email, code, expires_minutes=10)
+        
+        # Send verification email
+        await email_service.send_verification_email(email, code)
+        
+        logger.info("Verification code sent", email=email)
+        
+        return {
+            "success": True,
+            "message": "Verification code sent to your email",
+            "expires_in_minutes": 10
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to send verification code", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send verification code"
+        )
+
+
+@router.post("/auth/verify-code", response_model=VerifyCodeResponse)
+async def verify_email_code(
+    request_data: VerifyCodeRequest
+):
+    """
+    Verify the email verification code.
+    Returns success if code is valid and not expired.
+    """
+    try:
+        email = request_data.email.lower()
+        code = request_data.code
+        
+        # Verify the code
+        is_valid, error_message = email_service.verify_code(email, code)
+        
+        if not is_valid:
+            logger.warning("Verification code invalid", email=email, error=error_message)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_message
+            )
+        
+        logger.info("Email verified successfully", email=email)
+        
+        return VerifyCodeResponse(
+            verified=True,
+            message="Email verified successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to verify code", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify code"
         )
 
 @router.get("/auth/me")
