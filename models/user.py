@@ -18,12 +18,17 @@ class User(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    password_hash = Column(String(255), nullable=False)
+    password_hash = Column(String(255), nullable=True)  # Nullable for OAuth users
     first_name = Column(String(255))
     last_name = Column(String(255))
     role = Column(String(50), default="user")
     subscription_tier = Column(String(50), default="free")
     email_verified = Column(Boolean, default=False)
+    
+    # OAuth fields
+    oauth_provider = Column(String(50))  # e.g., 'google', 'facebook', 'microsoft'
+    oauth_provider_id = Column(String(255))  # User ID from OAuth provider
+    
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login = Column(DateTime(timezone=True))
