@@ -255,8 +255,14 @@ async def google_callback(
         return RedirectResponse(url=redirect_url)
         
     except Exception as e:
-        logger.error("Google OAuth callback failed", error=str(e), exc_info=True)
-        redirect_url = f"{frontend_redirect}?auth_error=authentication_failed"
+        error_type = type(e).__name__
+        error_detail = str(e)
+        logger.error("Google OAuth callback failed", 
+                    error_type=error_type,
+                    error=error_detail, 
+                    exc_info=True)
+        # Include more specific error in redirect for debugging
+        redirect_url = f"{frontend_redirect}?auth_error=authentication_failed&error_detail={error_type}"
         return RedirectResponse(url=redirect_url)
 
 

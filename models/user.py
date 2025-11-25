@@ -120,10 +120,10 @@ class UserProfile(Base):
     preferences = Column(JSONB, default={})
     selected_theme = Column(String(50), default="sun")  # Legacy field, kept for backwards compatibility
     
-    # Option set foreign keys
-    appearance_option_value_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
-    itheme_option_value_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
-    avatar_display_option_value_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Option set foreign keys (temporarily without FK constraint until option_values table exists)
+    appearance_option_value_id = Column(Integer, nullable=True, index=True)
+    itheme_option_value_id = Column(Integer, nullable=True, index=True)
+    avatar_display_option_value_id = Column(Integer, nullable=True, index=True)
     
     # Marketing and legal agreements
     agree_to_marketing = Column(Boolean, default=False)

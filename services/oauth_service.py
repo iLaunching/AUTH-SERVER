@@ -190,6 +190,16 @@ class OAuthService:
                         user.oauth_provider = provider
                         user.oauth_provider_id = provider_user_id
                     
+                    # Create profile if it doesn't exist
+                    if not user.profile:
+                        user_profile = UserProfile(
+                            user_id=user.id,
+                            avatar_url=picture,
+                            first_name=first_name,
+                            last_name=last_name
+                        )
+                        db.add(user_profile)
+                    
                     await db.commit()
                     logger.info("Existing OAuth user logged in", user_id=str(user.id), email=email)
                     return user.to_dict(), False
@@ -203,7 +213,7 @@ class OAuthService:
                         oauth_provider=provider,
                         oauth_provider_id=provider_user_id,
                         email_verified=True,  # OAuth emails are pre-verified
-                        password_hash=""  # No password for OAuth users
+                        password_hash=None  # No password for OAuth users
                     )
                     db.add(new_user)
                     await db.flush()
@@ -211,7 +221,9 @@ class OAuthService:
                     # Create user profile
                     user_profile = UserProfile(
                         user_id=new_user.id,
-                        avatar_url=picture
+                        avatar_url=picture,
+                        first_name=first_name,
+                        last_name=last_name
                     )
                     db.add(user_profile)
                     
