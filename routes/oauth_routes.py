@@ -267,6 +267,215 @@ async def google_callback(
 
 
 # ============================================
+# Facebook OAuth Endpoints
+# ============================================
+
+@router.get("/facebook/login")
+async def facebook_login(request: Request, redirect_url: Optional[str] = None):
+    """
+    Initiate Facebook OAuth login flow
+    
+    Query params:
+        redirect_url: Optional frontend URL to redirect to after authentication
+    
+    Returns redirect to Facebook's OAuth consent page
+    """
+    if not OAuthConfig.is_facebook_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Facebook OAuth is not configured on the server"
+        )
+    
+    # Generate state for CSRF protection
+    state = generate_state()
+    oauth_states[state] = {
+        'created_at': datetime.utcnow(),
+        'redirect_url': redirect_url or OAuthConfig.FRONTEND_URL
+    }
+    
+    # Clean up old states
+    cleanup_expired_states()
+    
+    # Generate authorization URL
+    try:
+        auth_url = oauth_service.get_facebook_auth_url(
+            redirect_uri=OAuthConfig.FACEBOOK_REDIRECT_URI,
+            state=state
+        )
+        
+        logger.info("Initiating Facebook OAuth login", state=state)
+        return RedirectResponse(url=auth_url)
+        
+    except Exception as e:
+        logger.error("Failed to generate Facebook auth URL", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to initiate Facebook login")
+
+
+@router.get("/facebook/callback")
+async def facebook_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None
+):
+    """
+    Handle Facebook OAuth callback
+    
+    Query params:
+        code: Authorization code from Facebook
+        state: State token for CSRF protection
+        error: Error message if authentication failed
+    
+    Returns redirect to frontend with tokens or error
+    """
+    # Check for OAuth errors
+    if error:
+        logger.warning("Facebook OAuth error", error=error, description=error_description)
+        redirect_url = f"{OAuthConfig.FRONTEND_URL}?auth_error={error}"
+        return RedirectResponse(url=redirect_url)
+    
+    # Validate required parameters
+    if not code or not state:
+        logger.warning("Missing code or state in Facebook callback")
+        redirect_url = f"{OAuthConfig.FRONTEND_URL}?auth_error=missing_parameters"
+        return RedirectResponse(url=redirect_url)
+    
+    # Validate state token
+    if not validate_state(state):
+        logger.warning("Invalid or expired state token", state=state)
+        redirect_url = f"{OAuthConfig.FRONTEND_URL}?auth_error=invalid_state"
+        return RedirectResponse(url=redirect_url)
+    
+    # Get the redirect URL from state
+    state_data = oauth_states.pop(state)
+    frontend_redirect = state_data['redirect_url']
+    
+    try:
+        # Exchange code for tokens
+        token_response = await oauth_service.exchange_facebook_code(
+            code=code,
+            redirect_uri=OAuthConfig.FACEBOOK_REDIRECT_URI
+        )
+        
+        access_token = token_response.get('access_token')
+        if not access_token:
+            raise ValueError("No access token in response")
+        
+        # Get user info from Facebook
+        facebook_user = await oauth_service.get_facebook_user_info(access_token)
+        
+        # Extract user information
+        email = facebook_user.get('email')
+        facebook_id = facebook_user.get('id')
+        first_name = facebook_user.get('first_name')
+        last_name = facebook_user.get('last_name')
+        picture = facebook_user.get('picture', {}).get('data', {}).get('url')
+        
+        if not email or not facebook_id:
+            raise ValueError("Missing required user information from Facebook")
+        
+        # Process user (create or get existing)
+        db = None
+        user_dict = None
+        is_new_user = False
+        
+        if async_session_maker:
+            async with async_session_maker() as db:
+                user_dict, is_new_user = await oauth_service.process_oauth_user(
+                    provider='facebook',
+                    provider_user_id=facebook_id,
+                    email=email,
+                    first_name=first_name,
+                    last_name=last_name,
+                    picture=picture,
+                    db=db
+                )
+                
+                # Create session and generate JWT tokens
+                ip_address = request.headers.get("X-Forwarded-For", "unknown")
+                user_agent = request.headers.get("User-Agent", "")
+                
+                session = UserSession(
+                    user_id=user_dict['id'],
+                    refresh_token_hash="",
+                    device_info={'user_agent': user_agent, 'platform': 'web'},
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    expires_at=datetime.utcnow() + timedelta(days=30)
+                )
+                db.add(session)
+                await db.flush()
+                
+                # Generate JWT tokens
+                jwt_access_token = JWTManager.create_access_token(
+                    user_id=str(user_dict['id']),
+                    email=email,
+                    role=user_dict.get('role', 'user')
+                )
+                jwt_refresh_token = JWTManager.create_refresh_token(
+                    user_id=str(user_dict['id']),
+                    session_id=str(session.session_id)
+                )
+                
+                # Hash and store refresh token
+                refresh_token_hash = PasswordHandler.hash_password(jwt_refresh_token)
+                session.refresh_token_hash = refresh_token_hash
+                
+                await db.commit()
+        else:
+            # Fallback to in-memory mode
+            user_dict, is_new_user = await oauth_service.process_oauth_user(
+                provider='facebook',
+                provider_user_id=facebook_id,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                picture=picture,
+                db=None
+            )
+            
+            # Generate simple tokens for in-memory mode
+            jwt_access_token = JWTManager.create_access_token(
+                user_id=facebook_id,
+                email=email,
+                role='user'
+            )
+            jwt_refresh_token = JWTManager.create_refresh_token(
+                user_id=facebook_id,
+                session_id=secrets.token_urlsafe(16)
+            )
+        
+        # Redirect to frontend with tokens
+        action = 'signup' if is_new_user else 'login'
+        redirect_url = (
+            f"{frontend_redirect}?auth_success=true"
+            f"&access_token={jwt_access_token}"
+            f"&refresh_token={jwt_refresh_token}"
+            f"&action={action}"
+        )
+        
+        logger.info(
+            "Facebook OAuth successful",
+            email=email,
+            is_new_user=is_new_user
+        )
+        
+        return RedirectResponse(url=redirect_url)
+        
+    except Exception as e:
+        error_type = type(e).__name__
+        error_detail = str(e)
+        logger.error("Facebook OAuth callback failed", 
+                    error_type=error_type,
+                    error=error_detail, 
+                    exc_info=True)
+        # Include more specific error in redirect for debugging
+        redirect_url = f"{frontend_redirect}?auth_error=authentication_failed&error_detail={error_type}"
+        return RedirectResponse(url=redirect_url)
+
+
+# ============================================
 # OAuth Status Endpoint
 # ============================================
 
@@ -287,6 +496,6 @@ async def oauth_status():
     
     return OAuthStatusResponse(
         google_enabled=config_status['google'],
-        facebook_enabled=False,  # Not implemented yet
+        facebook_enabled=config_status['facebook'],
         microsoft_enabled=False  # Not implemented yet
     )

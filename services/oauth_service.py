@@ -24,6 +24,7 @@ class OAuthService:
         """Initialize OAuth service"""
         self.oauth = OAuth()
         self._setup_google()
+        self._setup_facebook()
     
     def _setup_google(self):
         """Setup Google OAuth provider"""
@@ -50,6 +51,26 @@ class OAuthService:
                 logger.error("Failed to setup Google OAuth", error=str(e))
         else:
             logger.warning("Google OAuth not configured - skipping setup")
+    
+    def _setup_facebook(self):
+        """Setup Facebook OAuth provider"""
+        if OAuthConfig.is_facebook_configured():
+            try:
+                self.oauth.register(
+                    name='facebook',
+                    client_id=OAuthConfig.FACEBOOK_CLIENT_ID,
+                    client_secret=OAuthConfig.FACEBOOK_CLIENT_SECRET,
+                    authorize_url=OAuthConfig.FACEBOOK_AUTHORIZE_URL,
+                    access_token_url=OAuthConfig.FACEBOOK_TOKEN_URL,
+                    client_kwargs={
+                        'scope': ','.join(OAuthConfig.FACEBOOK_SCOPES),
+                    }
+                )
+                logger.info("Facebook OAuth provider configured successfully")
+            except Exception as e:
+                logger.error("Failed to setup Facebook OAuth", error=str(e))
+        else:
+            logger.warning("Facebook OAuth not configured - skipping setup")
     
     def get_google_auth_url(self, redirect_uri: str, state: str) -> str:
         """
@@ -140,6 +161,98 @@ class OAuthService:
                 return user_info
             except httpx.HTTPError as e:
                 logger.error("Failed to fetch Google user info", error=str(e))
+                raise ValueError(f"Failed to fetch user info: {str(e)}")
+    
+    def get_facebook_auth_url(self, redirect_uri: str, state: str) -> str:
+        """
+        Generate Facebook OAuth authorization URL
+        
+        Args:
+            redirect_uri: Where Facebook should redirect after authentication
+            state: Random state for CSRF protection
+            
+        Returns:
+            Authorization URL string
+        """
+        if not OAuthConfig.is_facebook_configured():
+            raise ValueError("Facebook OAuth is not configured")
+        
+        params = {
+            'client_id': OAuthConfig.FACEBOOK_CLIENT_ID,
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'scope': ','.join(OAuthConfig.FACEBOOK_SCOPES),
+            'state': state,
+        }
+        
+        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        auth_url = f"{OAuthConfig.FACEBOOK_AUTHORIZE_URL}?{query_string}"
+        
+        logger.info("Generated Facebook auth URL", state=state)
+        return auth_url
+    
+    async def exchange_facebook_code(self, code: str, redirect_uri: str) -> Dict:
+        """
+        Exchange Facebook authorization code for access token
+        
+        Args:
+            code: Authorization code from Facebook
+            redirect_uri: Redirect URI used in the initial request
+            
+        Returns:
+            Token response from Facebook
+        """
+        if not OAuthConfig.is_facebook_configured():
+            raise ValueError("Facebook OAuth is not configured")
+        
+        params = {
+            'code': code,
+            'client_id': OAuthConfig.FACEBOOK_CLIENT_ID,
+            'client_secret': OAuthConfig.FACEBOOK_CLIENT_SECRET,
+            'redirect_uri': redirect_uri,
+        }
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    OAuthConfig.FACEBOOK_TOKEN_URL,
+                    params=params
+                )
+                response.raise_for_status()
+                token_response = response.json()
+                logger.info("Successfully exchanged Facebook code for token")
+                return token_response
+            except httpx.HTTPError as e:
+                logger.error("Failed to exchange Facebook code", error=str(e))
+                raise ValueError(f"Failed to exchange authorization code: {str(e)}")
+    
+    async def get_facebook_user_info(self, access_token: str) -> Dict:
+        """
+        Get user information from Facebook using access token
+        
+        Args:
+            access_token: Facebook access token
+            
+        Returns:
+            User information from Facebook
+        """
+        params = {
+            'fields': 'id,email,first_name,last_name,picture.type(large)',
+            'access_token': access_token
+        }
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    OAuthConfig.FACEBOOK_USERINFO_URL,
+                    params=params
+                )
+                response.raise_for_status()
+                user_info = response.json()
+                logger.info("Successfully fetched Facebook user info", email=user_info.get('email'))
+                return user_info
+            except httpx.HTTPError as e:
+                logger.error("Failed to fetch Facebook user info", error=str(e))
                 raise ValueError(f"Failed to fetch user info: {str(e)}")
     
     async def process_oauth_user(

@@ -18,6 +18,11 @@ class OAuthConfig:
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
     GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/v1/auth/google/callback")
     
+    # Facebook OAuth Configuration
+    FACEBOOK_CLIENT_ID = os.getenv("FACEBOOK_CLIENT_ID")
+    FACEBOOK_CLIENT_SECRET = os.getenv("FACEBOOK_CLIENT_SECRET")
+    FACEBOOK_REDIRECT_URI = os.getenv("FACEBOOK_REDIRECT_URI", "http://localhost:8000/api/v1/auth/facebook/callback")
+    
     # OAuth Scopes
     GOOGLE_SCOPES = [
         "openid",
@@ -25,10 +30,19 @@ class OAuthConfig:
         "https://www.googleapis.com/auth/userinfo.profile",
     ]
     
+    FACEBOOK_SCOPES = [
+        "email",
+        "public_profile",
+    ]
+    
     # OAuth endpoints
     GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
     GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
     GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+    
+    FACEBOOK_AUTHORIZE_URL = "https://www.facebook.com/v18.0/dialog/oauth"
+    FACEBOOK_TOKEN_URL = "https://graph.facebook.com/v18.0/oauth/access_token"
+    FACEBOOK_USERINFO_URL = "https://graph.facebook.com/v18.0/me"
     
     # Frontend URL for redirects after OAuth
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -46,6 +60,18 @@ class OAuthConfig:
         return is_configured
     
     @classmethod
+    def is_facebook_configured(cls) -> bool:
+        """Check if Facebook OAuth is properly configured"""
+        is_configured = bool(cls.FACEBOOK_CLIENT_ID and cls.FACEBOOK_CLIENT_SECRET)
+        if not is_configured:
+            logger.warning(
+                "Facebook OAuth not configured",
+                has_client_id=bool(cls.FACEBOOK_CLIENT_ID),
+                has_client_secret=bool(cls.FACEBOOK_CLIENT_SECRET)
+            )
+        return is_configured
+    
+    @classmethod
     def get_google_config(cls) -> Dict[str, str]:
         """Get Google OAuth configuration as dictionary"""
         return {
@@ -58,8 +84,21 @@ class OAuthConfig:
         }
     
     @classmethod
+    def get_facebook_config(cls) -> Dict[str, str]:
+        """Get Facebook OAuth configuration as dictionary"""
+        return {
+            "client_id": cls.FACEBOOK_CLIENT_ID,
+            "client_secret": cls.FACEBOOK_CLIENT_SECRET,
+            "redirect_uri": cls.FACEBOOK_REDIRECT_URI,
+            "authorize_url": cls.FACEBOOK_AUTHORIZE_URL,
+            "token_url": cls.FACEBOOK_TOKEN_URL,
+            "userinfo_url": cls.FACEBOOK_USERINFO_URL,
+        }
+    
+    @classmethod
     def validate_config(cls) -> Dict[str, bool]:
         """Validate OAuth configuration for all providers"""
         return {
             "google": cls.is_google_configured(),
+            "facebook": cls.is_facebook_configured(),
         }
