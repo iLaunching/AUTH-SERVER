@@ -1,4 +1,4 @@
--- Migration: Add selected_theme column to user_profiles table
+😊-- Migration: Add selected_theme column to user_profiles table
 -- This column was added to support appearance theme selection
 -- Run this SQL directly on the Railway PostgreSQL database
 

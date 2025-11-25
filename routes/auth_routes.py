@@ -38,7 +38,8 @@ class SignupRequest(BaseModel):
     """Request model for user signup"""
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
-    name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
 
 class LoginRequest(BaseModel):
     """Request model for user login"""
@@ -199,7 +200,8 @@ async def signup(
         new_user = User(
             email=email,
             password_hash=password_hash,
-            name=signup_data.name
+            first_name=signup_data.first_name,
+            last_name=signup_data.last_name
         )
         db.add(new_user)
         await db.flush()  # Get user ID without committing

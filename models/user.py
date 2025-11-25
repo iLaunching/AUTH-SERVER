@@ -19,7 +19,8 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
-    name = Column(String(255))
+    first_name = Column(String(255))
+    last_name = Column(String(255))
     role = Column(String(50), default="user")
     subscription_tier = Column(String(50), default="free")
     email_verified = Column(Boolean, default=False)
@@ -39,7 +40,8 @@ class User(Base):
         data = {
             "id": str(self.id),
             "email": self.email,
-            "name": self.name,
+            "first_name": self.first_name,
+            "last_name": self.last_name,
             "role": self.role,
             "subscription_tier": self.subscription_tier,
             "email_verified": self.email_verified,
@@ -95,15 +97,37 @@ class UserProfile(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    
+    # Basic profile fields
+    first_name = Column(Text)
+    last_name = Column(Text)
     phone = Column(String(20))
-    avatar_url = Column(Text)
     bio = Column(Text)
     timezone = Column(String(50), default="UTC")
     language = Column(String(10), default="en")
+    
+    # Avatar fields
+    avatar_url = Column(Text)  # Legacy field
+    avatar_icon = Column(Text)
+    avatar_image = Column(Text)
+    
+    # Preferences and settings
     preferences = Column(JSONB, default={})
     selected_theme = Column(String(50), default="sun")  # Legacy field, kept for backwards compatibility
+    
+    # Option set foreign keys
     appearance_option_value_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
+    itheme_option_value_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
+    avatar_display_option_value_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
+    
+    # Marketing and legal agreements
+    agree_to_marketing = Column(Boolean, default=False)
+    agree_to_terms = Column(Boolean, default=False)
+    
+    # Onboarding
     onboarding_completed = Column(Boolean, default=False)
+    
+    # Timestamps
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -118,14 +142,22 @@ class UserProfile(Base):
         return {
             "id": str(self.id),
             "user_id": str(self.user_id),
+            "first_name": self.first_name,
+            "last_name": self.last_name,
             "phone": self.phone,
             "avatar_url": self.avatar_url,
+            "avatar_icon": self.avatar_icon,
+            "avatar_image": self.avatar_image,
             "bio": self.bio,
             "timezone": self.timezone,
             "language": self.language,
             "preferences": self.preferences,
             "selected_theme": self.selected_theme,
             "appearance_option_value_id": self.appearance_option_value_id,
+            "itheme_option_value_id": self.itheme_option_value_id,
+            "avatar_display_option_value_id": self.avatar_display_option_value_id,
+            "agree_to_marketing": self.agree_to_marketing,
+            "agree_to_terms": self.agree_to_terms,
             "onboarding_completed": self.onboarding_completed,
         }
 

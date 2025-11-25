@@ -96,7 +96,8 @@ class CheckEmailResponse(BaseModel):
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str
-    name: str = None
+    first_name: str = None
+    last_name: str = None
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -311,7 +312,8 @@ async def signup(signup_data: SignupRequest, request: Request):
                     new_user = User(
                         email=email,
                         password_hash=password_hash,
-                        name=signup_data.name or email.split("@")[0]
+                        first_name=signup_data.first_name,
+                        last_name=signup_data.last_name
                     )
                     db.add(new_user)
                     await db.flush()
@@ -394,7 +396,8 @@ async def signup(signup_data: SignupRequest, request: Request):
     
     user_data = {
         "email": email,
-        "name": signup_data.name or email.split("@")[0],
+        "first_name": signup_data.first_name or email.split("@")[0],
+        "last_name": signup_data.last_name,
         "password": signup_data.password,
         "created_at": datetime.utcnow().isoformat()
     }
@@ -577,7 +580,8 @@ async def login(login_data: LoginRequest, request: Request):
     return AuthResponse(
         user={
             "email": user["email"],
-            "name": user["name"],
+            "first_name": user.get("first_name"),
+            "last_name": user.get("last_name"),
             "created_at": user["created_at"]
         },
         access_token=access_token,
