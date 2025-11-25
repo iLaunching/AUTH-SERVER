@@ -63,6 +63,20 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "Bearer"
 
+class CheckEmailSignupRequest(BaseModel):
+    """Request model for checking email during signup flow"""
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+
+class CheckEmailSignupResponse(BaseModel):
+    """Response model for email check during signup"""
+    action: str  # 'login' or 'signup'
+    message: str
+    logged_in: bool = False
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    user: Optional[dict] = None
+
 class SendVerificationCodeRequest(BaseModel):
     """Request model for sending verification code"""
     email: EmailStr
@@ -598,6 +612,122 @@ async def get_current_user(
 # ============================================
 # Email Verification Endpoints
 # ============================================
+
+@router.post("/auth/check-email-signup", response_model=CheckEmailSignupResponse)
+async def check_email_for_signup(
+    request_data: CheckEmailSignupRequest,
+    req: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Check if user exists during signup flow.
+    If user exists with matching password, log them in.
+    If user exists with wrong password, return error.
+    If user doesn't exist, proceed with signup.
+    """
+    try:
+        email = request_data.email.lower()
+        password = request_data.password
+        
+        # Check if user exists
+        result = await db.execute(
+            select(User).where(User.email == email)
+        )
+        existing_user = result.scalar_one_or_none()
+        
+        if existing_user:
+            # User exists - try to log them in
+            if not existing_user.password_hash:
+                # OAuth user trying to use password
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"This email is registered with {existing_user.oauth_provider}. Please use that to login."
+                )
+            
+            # Verify password
+            if not PasswordHandler.verify_password(password, existing_user.password_hash):
+                # Wrong password
+                await log_login_attempt(
+                    db=db,
+                    email=email,
+                    ip_address=req.client.host,
+                    user_agent=req.headers.get("user-agent", "unknown"),
+                    success=False,
+                    failure_reason="incorrect_password"
+                )
+                await db.commit()
+                
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect password"
+                )
+            
+            # Password correct - log user in
+            access_token = JWTManager.create_access_token(existing_user.id)
+            refresh_token = JWTManager.create_refresh_token(existing_user.id)
+            
+            # Create session
+            session = UserSession(
+                user_id=existing_user.id,
+                refresh_token=refresh_token,
+                ip_address=req.client.host,
+                user_agent=req.headers.get("user-agent", "unknown")
+            )
+            db.add(session)
+            
+            # Log successful login
+            await log_login_attempt(
+                db=db,
+                email=email,
+                ip_address=req.client.host,
+                user_agent=req.headers.get("user-agent", "unknown"),
+                success=True
+            )
+            
+            await db.commit()
+            await db.refresh(existing_user)
+            
+            # Get user profile
+            profile_result = await db.execute(
+                select(UserProfile).where(UserProfile.user_id == existing_user.id)
+            )
+            profile = profile_result.scalar_one_or_none()
+            
+            logger.info("User logged in during signup flow", user_id=existing_user.id, email=email)
+            
+            return CheckEmailSignupResponse(
+                action="login",
+                message="Welcome back! Logged in successfully.",
+                logged_in=True,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                user={
+                    "id": existing_user.id,
+                    "email": existing_user.email,
+                    "email_verified": existing_user.email_verified,
+                    "first_name": profile.first_name if profile else None,
+                    "last_name": profile.last_name if profile else None,
+                    "created_at": existing_user.created_at.isoformat(),
+                }
+            )
+        
+        else:
+            # User doesn't exist - proceed with signup
+            logger.info("New user starting signup", email=email)
+            return CheckEmailSignupResponse(
+                action="signup",
+                message="Email available. Please verify your email to complete signup.",
+                logged_in=False
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to check email for signup", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process request"
+        )
 
 @router.post("/auth/send-verification-code")
 async def send_verification_code(
