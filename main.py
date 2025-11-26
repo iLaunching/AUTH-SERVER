@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Import OAuth routes
 from routes.oauth_routes import router as oauth_router
+from routes.auth_routes import router as auth_router
 
 # Configure structured logging
 structlog.configure(
@@ -133,6 +134,8 @@ app.add_middleware(
 
 # Include OAuth routes
 app.include_router(oauth_router, prefix="/api/v1")
+# Include Auth routes (signup, login, verification, etc.)
+app.include_router(auth_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
