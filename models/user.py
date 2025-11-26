@@ -54,6 +54,12 @@ class User(Base):
             "last_login": self.last_login.isoformat() if self.last_login else None,
         }
         
+        # Include profile info if available
+        if self.profile:
+            data["onboarding_completed"] = self.profile.onboarding_completed
+        else:
+            data["onboarding_completed"] = False
+        
         if include_sensitive:
             data["password_hash"] = self.password_hash
         
