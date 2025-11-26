@@ -393,15 +393,16 @@ class OAuthService:
         """
         from models.user import User, UserProfile
         from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
         
         email = email.lower()
         
         # Database mode
         if db:
             try:
-                # Check if user exists by email
+                # Check if user exists by email - eagerly load profile
                 result = await db.execute(
-                    select(User).where(User.email == email)
+                    select(User).options(selectinload(User.profile)).where(User.email == email)
                 )
                 user = result.scalar_one_or_none()
                 
@@ -425,6 +426,8 @@ class OAuthService:
                         db.add(user_profile)
                     
                     await db.commit()
+                    
+                    # Profile is already eagerly loaded via selectinload
                     logger.info("Existing OAuth user logged in", user_id=str(user.id), email=email)
                     return user.to_dict(), False
                 
@@ -452,6 +455,10 @@ class OAuthService:
                     db.add(user_profile)
                     
                     await db.commit()
+                    
+                    # Refresh to get the profile relationship loaded
+                    await db.refresh(new_user, ['profile'])
+                    
                     logger.info("New OAuth user created", user_id=str(new_user.id), email=email, provider=provider)
                     return new_user.to_dict(), True
                     
