@@ -239,31 +239,17 @@ async def google_callback(
         
         # Redirect to frontend with tokens
         action = 'signup' if is_new_user else 'login'
-        
-        # Check if user needs onboarding
-        onboarding_completed = user_dict.get('onboarding_completed', False)
-        
-        # Redirect to onboarding if not completed, otherwise to requested page
-        if not onboarding_completed:
-            redirect_url = (
-                f"{OAuthConfig.FRONTEND_URL}/onboarding?auth_success=true"
-                f"&access_token={jwt_access_token}"
-                f"&refresh_token={jwt_refresh_token}"
-                f"&action={action}"
-            )
-        else:
-            redirect_url = (
-                f"{frontend_redirect}?auth_success=true"
-                f"&access_token={jwt_access_token}"
-                f"&refresh_token={jwt_refresh_token}"
-                f"&action={action}"
-            )
+        redirect_url = (
+            f"{frontend_redirect}?auth_success=true"
+            f"&access_token={jwt_access_token}"
+            f"&refresh_token={jwt_refresh_token}"
+            f"&action={action}"
+        )
         
         logger.info(
             "Google OAuth successful",
             email=email,
-            is_new_user=is_new_user,
-            onboarding_completed=onboarding_completed
+            is_new_user=is_new_user
         )
         
         return RedirectResponse(url=redirect_url)
@@ -462,31 +448,17 @@ async def facebook_callback(
         
         # Redirect to frontend with tokens
         action = 'signup' if is_new_user else 'login'
-        
-        # Check if user needs onboarding
-        onboarding_completed = user_dict.get('onboarding_completed', False)
-        
-        # Redirect to onboarding if not completed, otherwise to requested page
-        if not onboarding_completed:
-            redirect_url = (
-                f"{OAuthConfig.FRONTEND_URL}/onboarding?auth_success=true"
-                f"&access_token={jwt_access_token}"
-                f"&refresh_token={jwt_refresh_token}"
-                f"&action={action}"
-            )
-        else:
-            redirect_url = (
-                f"{frontend_redirect}?auth_success=true"
-                f"&access_token={jwt_access_token}"
-                f"&refresh_token={jwt_refresh_token}"
-                f"&action={action}"
-            )
+        redirect_url = (
+            f"{frontend_redirect}?auth_success=true"
+            f"&access_token={jwt_access_token}"
+            f"&refresh_token={jwt_refresh_token}"
+            f"&action={action}"
+        )
         
         logger.info(
             "Facebook OAuth successful",
             email=email,
-            is_new_user=is_new_user,
-            onboarding_completed=onboarding_completed
+            is_new_user=is_new_user
         )
         
         return RedirectResponse(url=redirect_url)
