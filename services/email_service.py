@@ -118,7 +118,7 @@ class EmailService:
                 "to": [email],
                 "subject": "Verify your iLaunching account",
                 "html": f"""
-                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <div style="font-family: ariel, sans-serif; max-width: 600px; margin: 0 auto;">
                         <h2 style="color: #333;">Verify Your Email</h2>
                         <p style="color: #666; font-size: 16px;">
                             Thank you for signing up! Please use the verification code below to complete your registration:

@@ -244,6 +244,7 @@ async def google_callback(
             f"&access_token={jwt_access_token}"
             f"&refresh_token={jwt_refresh_token}"
             f"&action={action}"
+            f"&provider=google"
         )
         
         logger.info(
@@ -453,6 +454,7 @@ async def facebook_callback(
             f"&access_token={jwt_access_token}"
             f"&refresh_token={jwt_refresh_token}"
             f"&action={action}"
+            f"&provider=facebook"
         )
         
         logger.info(
@@ -661,6 +663,7 @@ async def microsoft_callback(
             f"&access_token={jwt_access_token}"
             f"&refresh_token={jwt_refresh_token}"
             f"&action={action}"
+            f"&provider=microsoft"
         )
         
         logger.info(

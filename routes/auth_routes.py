@@ -10,6 +10,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 import structlog
 
 from models.user import User, Session as UserSession, LoginAttempt, UserProfile
@@ -284,6 +285,12 @@ async def signup(
         # Commit all changes
         await db.commit()
         
+        # Reload user with profile relationship eagerly loaded
+        result = await db.execute(
+            select(User).where(User.id == new_user.id).options(selectinload(User.profile))
+        )
+        new_user = result.scalar_one()
+        
         logger.info("User signup successful", user_id=str(new_user.id), email=email)
         
         return AuthResponse(
@@ -318,9 +325,9 @@ async def login(
         ip_address = get_client_ip(request)
         user_agent = request.headers.get("User-Agent", "")
         
-        # Find user by email
+        # Find user by email with profile loaded
         result = await db.execute(
-            select(User).where(User.email == email)
+            select(User).where(User.email == email).options(selectinload(User.profile))
         )
         user = result.scalar_one_or_none()
         
@@ -404,6 +411,12 @@ async def login(
         
         # Commit all changes
         await db.commit()
+        
+        # Reload user with profile to ensure fresh data
+        result = await db.execute(
+            select(User).where(User.id == user.id).options(selectinload(User.profile))
+        )
+        user = result.scalar_one()
         
         logger.info("User login successful", user_id=str(user.id), email=email)
         
@@ -583,9 +596,9 @@ async def get_current_user(
         
         user_id = payload.get("sub")
         
-        # Get user from database
+        # Get user from database with profile eagerly loaded
         result = await db.execute(
-            select(User).where(User.id == user_id)
+            select(User).where(User.id == user_id).options(selectinload(User.profile))
         )
         user = result.scalar_one_or_none()
         
