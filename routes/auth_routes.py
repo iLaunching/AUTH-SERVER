@@ -17,6 +17,7 @@ from models.user import User, Session as UserSession, LoginAttempt, UserProfile
 from auth.jwt_manager import JWTManager
 from auth.password_handler import PasswordHandler
 from config.database import get_db
+from config.oauth import OAuthConfig
 from services.email_service import email_service
 
 logger = structlog.get_logger()
@@ -35,6 +36,11 @@ class CheckEmailResponse(BaseModel):
     """Response model for email check"""
     exists: bool
     message: str
+    oauth_provider: Optional[str] = None  # e.g., 'google', 'microsoft' if user signed up via OAuth
+    
+    class Config:
+        # Always include fields even when None
+        json_schema_extra = {"example": {"exists": True, "message": "Email found", "oauth_provider": None}}
 
 class SignupRequest(BaseModel):
     """Request model for user signup"""
@@ -145,6 +151,23 @@ def get_device_info(request: Request) -> dict:
 # Authentication Routes
 # ============================================
 
+@router.get("/auth/oauth/config")
+async def get_oauth_config():
+    """
+    Get OAuth configuration for client-side OAuth flows.
+    Returns public information only (client IDs are safe to expose).
+    """
+    return {
+        "google": {
+            "client_id": OAuthConfig.GOOGLE_CLIENT_ID,
+            "configured": OAuthConfig.is_google_configured()
+        },
+        "microsoft": {
+            "client_id": OAuthConfig.MICROSOFT_CLIENT_ID,
+            "configured": OAuthConfig.is_microsoft_configured()
+        }
+    }
+
 @router.post("/auth/check-email", response_model=CheckEmailResponse)
 async def check_email(
     request: CheckEmailRequest,
@@ -162,16 +185,27 @@ async def check_email(
         user = result.scalar_one_or_none()
         
         if user:
-            logger.info("Email check - exists", email=request.email)
-            return CheckEmailResponse(
-                exists=True,
-                message="Email found. Please enter your password to login."
-            )
+            # Check if user signed up via OAuth
+            if user.oauth_provider:
+                logger.info("Email check - OAuth user", email=request.email, provider=user.oauth_provider)
+                return CheckEmailResponse(
+                    exists=True,
+                    message=f"This account was created using {user.oauth_provider.title()}. Please sign in with {user.oauth_provider.title()} instead.",
+                    oauth_provider=user.oauth_provider
+                )
+            else:
+                logger.info("Email check - exists", email=request.email)
+                return CheckEmailResponse(
+                    exists=True,
+                    message="Email found. Please enter your password to login.",
+                    oauth_provider=None
+                )
         else:
             logger.info("Email check - new user", email=request.email)
             return CheckEmailResponse(
                 exists=False,
-                message="Welcome! Let's create your account."
+                message="Welcome! Let's create your account.",
+                oauth_provider=None
             )
             
     except Exception as e:
@@ -345,6 +379,25 @@ async def login(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password"
+            )
+        
+        # Check if user signed up via OAuth (has no password)
+        if user.oauth_provider:
+            # Log failed attempt
+            await log_login_attempt(
+                db=db,
+                email=email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                failure_reason="oauth_user_password_login_blocked"
+            )
+            logger.warning("Login blocked - OAuth user trying password login", 
+                          email=email, 
+                          oauth_provider=user.oauth_provider)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"This account was created using {user.oauth_provider.title()}. Please sign in with {user.oauth_provider.title()} instead."
             )
         
         # Verify password

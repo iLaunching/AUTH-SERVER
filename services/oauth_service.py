@@ -410,10 +410,16 @@ class OAuthService:
                     # Existing user - update last login
                     user.last_login = datetime.utcnow()
                     
-                    # Update OAuth provider info if not set
-                    if not user.oauth_provider:
-                        user.oauth_provider = provider
-                        user.oauth_provider_id = provider_user_id
+                    # Always update OAuth provider info when user signs in via OAuth
+                    # This ensures users who initially signed up with email/password
+                    # but then use OAuth are properly marked as OAuth users
+                    user.oauth_provider = provider
+                    user.oauth_provider_id = provider_user_id
+                    
+                    logger.info("Updating user OAuth provider", 
+                               user_id=str(user.id), 
+                               email=email, 
+                               provider=provider)
                     
                     # Create profile if it doesn't exist
                     if not user.profile:
