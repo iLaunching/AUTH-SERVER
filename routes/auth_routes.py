@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 import structlog
 
-from models.user import User, Session as UserSession, LoginAttempt, UserProfile
+from models.user import User, Session as UserSession, LoginAttempt, UserProfile, UserNavigation
 from auth.jwt_manager import JWTManager
 from auth.password_handler import PasswordHandler
 from config.database import get_db
@@ -276,6 +276,15 @@ async def signup(
             user_id=new_user.id
         )
         db.add(user_profile)
+        await db.flush()  # Get profile ID
+        
+        # Create user navigation
+        user_navigation = UserNavigation(user_profile_id=user_profile.id)
+        db.add(user_navigation)
+        await db.flush()  # Get navigation ID
+        
+        # Link navigation to profile
+        user_profile.user_navigation_id = user_navigation.id
         
         # Create session and tokens
         ip_address = get_client_ip(request)

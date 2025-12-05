@@ -138,6 +138,9 @@ class UserProfile(Base):
     # Onboarding
     onboarding_completed = Column(Boolean, default=False)
     
+    # Navigation (one-to-one with user_navigation table)
+    user_navigation_id = Column(UUID(as_uuid=True), nullable=True, unique=True, index=True)
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -230,3 +233,27 @@ class EmailVerificationToken(Base):
     
     def __repr__(self):
         return f"<EmailVerificationToken(user_id={self.user_id}, used={self.used})>"
+
+
+class UserNavigation(Base):
+    """User navigation tracking - stores current user context and navigation state"""
+    __tablename__ = "user_navigation"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_profile_id = Column(UUID(as_uuid=True), ForeignKey("user_profiles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    current_smart_hub_id = Column(UUID(as_uuid=True), nullable=True, unique=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<UserNavigation(id={self.id}, user_profile_id={self.user_profile_id}, current_smart_hub_id={self.current_smart_hub_id})>"
+    
+    def to_dict(self):
+        """Convert user navigation to dictionary"""
+        return {
+            "id": str(self.id),
+            "user_profile_id": str(self.user_profile_id),
+            "current_smart_hub_id": str(self.current_smart_hub_id) if self.current_smart_hub_id else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

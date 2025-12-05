@@ -391,7 +391,7 @@ class OAuthService:
         Returns:
             Tuple of (user_dict, is_new_user)
         """
-        from models.user import User, UserProfile
+        from models.user import User, UserProfile, UserNavigation
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
         
@@ -430,6 +430,15 @@ class OAuthService:
                             last_name=last_name
                         )
                         db.add(user_profile)
+                        await db.flush()  # Get profile ID
+                        
+                        # Create user navigation
+                        user_navigation = UserNavigation(user_profile_id=user_profile.id)
+                        db.add(user_navigation)
+                        await db.flush()  # Get navigation ID
+                        
+                        # Link navigation to profile
+                        user_profile.user_navigation_id = user_navigation.id
                     
                     await db.commit()
                     
@@ -459,6 +468,15 @@ class OAuthService:
                         last_name=last_name
                     )
                     db.add(user_profile)
+                    await db.flush()  # Get profile ID
+                    
+                    # Create user navigation
+                    user_navigation = UserNavigation(user_profile_id=user_profile.id)
+                    db.add(user_navigation)
+                    await db.flush()  # Get navigation ID
+                    
+                    # Link navigation to profile
+                    user_profile.user_navigation_id = user_navigation.id
                     
                     await db.commit()
                     
