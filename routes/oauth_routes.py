@@ -162,9 +162,19 @@ async def google_callback(
         first_name = google_user.get('given_name')
         last_name = google_user.get('family_name')
         picture = google_user.get('picture')
+        hd = google_user.get('hd')  # Hosted domain for Google Workspace accounts
         
         if not email or not google_id:
             raise ValueError("Missing required user information from Google")
+        
+        # Determine account type based on hd parameter or email domain
+        account_type_value = 'personal'
+        if hd:  # Google Workspace account
+            account_type_value = 'business'
+            logger.info("Detected Google Workspace account", email=email, domain=hd)
+        elif not email.endswith('@gmail.com'):  # Custom domain but not gmail
+            account_type_value = 'business'
+            logger.info("Detected custom domain email", email=email)
         
         # Process user (create or get existing)
         db = None
@@ -180,6 +190,7 @@ async def google_callback(
                     first_name=first_name,
                     last_name=last_name,
                     picture=picture,
+                    account_type=account_type_value,
                     db=db
                 )
                 
@@ -585,6 +596,10 @@ async def microsoft_callback(
         if not email or not microsoft_id:
             raise ValueError("Missing required user information from Microsoft")
         
+        # Microsoft accounts are typically business/work accounts
+        account_type_value = 'business'
+        logger.info("Microsoft OAuth user", email=email, account_type=account_type_value)
+        
         # Process user (create or get existing)
         db = None
         user_dict = None
@@ -599,6 +614,7 @@ async def microsoft_callback(
                     first_name=given_name,
                     last_name=surname,
                     picture=None,  # Microsoft Graph doesn't provide picture URL directly
+                    account_type=account_type_value,
                     db=db
                 )
                 

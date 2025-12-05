@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 import structlog
 
-from models.user import User, Session as UserSession, LoginAttempt, UserProfile, UserNavigation
+from models.user import User, Session as UserSession, LoginAttempt, UserProfile, UserNavigation, OptionSet, OptionValue
 from auth.jwt_manager import JWTManager
 from auth.password_handler import PasswordHandler
 from config.database import get_db
@@ -48,6 +48,7 @@ class SignupRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    account_type: Optional[str] = 'personal'  # 'personal', 'business', or 'education'
 
 class LoginRequest(BaseModel):
     """Request model for user login"""
@@ -228,6 +229,9 @@ async def signup(
     try:
         email = signup_data.email.lower()
         
+        # Log account type for debugging
+        logger.info("Signup request received", email=email, account_type=signup_data.account_type)
+        
         # Check if user already exists
         result = await db.execute(
             select(User).where(User.email == email)
@@ -276,9 +280,36 @@ async def signup(
         # Set oauth_provider_id to user's own ID
         new_user.oauth_provider_id = str(new_user.id)
         
+        # Get account type from request (default to personal)
+        account_type_value = signup_data.account_type or 'personal'
+        logger.info("Looking up account type", account_type_value=account_type_value)
+        
+        account_type = await db.execute(
+            select(OptionValue)
+            .join(OptionSet)
+            .where(OptionSet.name == 'account_type')
+            .where(OptionValue.value_name == account_type_value)
+        )
+        account_type = account_type.scalar_one_or_none()
+        
+        logger.info("Account type lookup result", 
+                   account_type_id=account_type.id if account_type else None,
+                   account_type_value=account_type.value_name if account_type else None)
+        
+        # Fallback to personal if specified account type not found
+        if not account_type:
+            account_type = await db.execute(
+                select(OptionValue)
+                .join(OptionSet)
+                .where(OptionSet.name == 'account_type')
+                .where(OptionValue.value_name == 'personal')
+            )
+            account_type = account_type.scalar_one_or_none()
+        
         # Create user profile
         user_profile = UserProfile(
-            user_id=new_user.id
+            user_id=new_user.id,
+            account_type_id=account_type.id if account_type else None
         )
         db.add(user_profile)
         await db.flush()  # Get profile ID

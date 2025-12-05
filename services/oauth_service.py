@@ -178,7 +178,10 @@ class OAuthService:
                 )
                 response.raise_for_status()
                 user_info = response.json()
-                logger.info("Successfully fetched Google user info", email=user_info.get('email'))
+                logger.info("Successfully fetched Google user info", 
+                           email=user_info.get('email'),
+                           has_hd=bool(user_info.get('hd')),
+                           hd_domain=user_info.get('hd'))
                 return user_info
             except httpx.HTTPError as e:
                 logger.error("Failed to fetch Google user info", error=str(e))
@@ -374,6 +377,7 @@ class OAuthService:
         first_name: Optional[str] = None,
         last_name: Optional[str] = None,
         picture: Optional[str] = None,
+        account_type: str = 'personal',
         db = None
     ) -> Tuple[Dict, bool]:
         """
@@ -386,12 +390,13 @@ class OAuthService:
             first_name: User's first name
             last_name: User's last name
             picture: User's profile picture URL
+            account_type: Account type ('personal' or 'business')
             db: Database session (optional, for database mode)
             
         Returns:
             Tuple of (user_dict, is_new_user)
         """
-        from models.user import User, UserProfile, UserNavigation
+        from models.user import User, UserProfile, UserNavigation, OptionSet, OptionValue
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
         
@@ -460,12 +465,37 @@ class OAuthService:
                     db.add(new_user)
                     await db.flush()
                     
+                    # Get account type option value
+                    account_type_result = await db.execute(
+                        select(OptionValue)
+                        .join(OptionSet)
+                        .where(OptionSet.name == 'account_type')
+                        .where(OptionValue.value_name == account_type)
+                    )
+                    account_type_obj = account_type_result.scalar_one_or_none()
+                    
+                    # Fallback to personal if not found
+                    if not account_type_obj:
+                        account_type_result = await db.execute(
+                            select(OptionValue)
+                            .join(OptionSet)
+                            .where(OptionSet.name == 'account_type')
+                            .where(OptionValue.value_name == 'personal')
+                        )
+                        account_type_obj = account_type_result.scalar_one_or_none()
+                    
+                    logger.info("Setting account type for new OAuth user",
+                               email=email,
+                               account_type=account_type,
+                               account_type_id=account_type_obj.id if account_type_obj else None)
+                    
                     # Create user profile
                     user_profile = UserProfile(
                         user_id=new_user.id,
                         avatar_url=picture,
                         first_name=first_name,
-                        last_name=last_name
+                        last_name=last_name,
+                        account_type_id=account_type_obj.id if account_type_obj else None
                     )
                     db.add(user_profile)
                     await db.flush()  # Get profile ID

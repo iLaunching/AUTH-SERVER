@@ -130,6 +130,7 @@ class UserProfile(Base):
     appearance_option_value_id = Column(Integer, nullable=True, index=True)
     itheme_option_value_id = Column(Integer, nullable=True, index=True)
     avatar_display_option_value_id = Column(Integer, nullable=True, index=True)
+    account_type_id = Column(Integer, nullable=True, index=True)  # Foreign key to option_values
     
     # Marketing and legal agreements
     agree_to_marketing = Column(Boolean, default=False)
@@ -257,3 +258,33 @@ class UserNavigation(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class OptionSet(Base):
+    """Option set categories (e.g., itheme, appearance, account_type)"""
+    __tablename__ = "option_sets"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<OptionSet(id={self.id}, name={self.name})>"
+
+
+class OptionValue(Base):
+    """Individual option values within option sets"""
+    __tablename__ = "option_values"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    option_set_id = Column(Integer, ForeignKey("option_sets.id", ondelete="CASCADE"), nullable=False, index=True)
+    value_name = Column(String(100), nullable=False)
+    display_name = Column(String(200))
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<OptionValue(id={self.id}, value_name={self.value_name})>"
+
