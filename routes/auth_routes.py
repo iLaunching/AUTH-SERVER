@@ -266,10 +266,15 @@ async def signup(
             password_hash=password_hash,
             first_name=signup_data.first_name,
             last_name=signup_data.last_name,
-            email_verified=True  # Mark as verified since they completed email verification
+            email_verified=True,  # Mark as verified since they completed email verification
+            oauth_provider="iLaunching",
+            oauth_provider_id=None  # Will be set to user.id after flush
         )
         db.add(new_user)
         await db.flush()  # Get user ID without committing
+        
+        # Set oauth_provider_id to user's own ID
+        new_user.oauth_provider_id = str(new_user.id)
         
         # Create user profile
         user_profile = UserProfile(
