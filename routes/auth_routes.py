@@ -894,3 +894,43 @@ async def get_me(
         "user": current_user.to_dict(),
         "message": "Authenticated successfully"
     }
+
+
+@router.patch("/profile/onboarding")
+async def update_onboarding_status(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Mark user's onboarding as completed.
+    Called by api-server after successful Smart Hub/Matrix creation.
+    """
+    try:
+        # Get or create user profile
+        if not current_user.profile:
+            profile = UserProfile(
+                user_id=current_user.id,
+                onboarding_completed=True
+            )
+            db.add(profile)
+        else:
+            current_user.profile.onboarding_completed = True
+        
+        await db.commit()
+        await db.refresh(current_user)
+        
+        logger.info("Onboarding status updated", user_id=str(current_user.id))
+        
+        return {
+            "success": True,
+            "message": "Onboarding status updated",
+            "onboarding_completed": True
+        }
+        
+    except Exception as e:
+        logger.error("Failed to update onboarding status", user_id=str(current_user.id), error=str(e))
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update onboarding status"
+        )
