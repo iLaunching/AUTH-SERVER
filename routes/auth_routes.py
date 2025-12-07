@@ -3,7 +3,7 @@ Authentication Routes
 Handles user signup, login, token refresh, and email checking.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -575,7 +575,7 @@ async def refresh_access_token(
             )
         
         # Check if session expired
-        if session.expires_at < datetime.utcnow():
+        if session.expires_at < datetime.now(timezone.utc):
             logger.warning("Session expired", session_id=session_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

@@ -126,11 +126,11 @@ class UserProfile(Base):
     preferences = Column(JSONB, default={})
     selected_theme = Column(String(50), default="sun")  # Legacy field, kept for backwards compatibility
     
-    # Option set foreign keys (temporarily without FK constraint until option_values table exists)
-    appearance_option_value_id = Column(Integer, nullable=True, index=True)
-    itheme_option_value_id = Column(Integer, nullable=True, index=True)
+    # Option set foreign keys - actual column names in database
+    appearance_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
+    itheme_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
     avatar_display_option_value_id = Column(Integer, nullable=True, index=True)
-    account_type_id = Column(Integer, nullable=True, index=True)  # Foreign key to option_values
+    account_type_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
     
     # Marketing and legal agreements
     agree_to_marketing = Column(Boolean, default=False)
@@ -148,6 +148,9 @@ class UserProfile(Base):
     
     # Relationships
     user = relationship("User", back_populates="profile")
+    appearance = relationship("OptionValue", foreign_keys=[appearance_id])
+    itheme = relationship("OptionValue", foreign_keys=[itheme_id])
+    account_type = relationship("OptionValue", foreign_keys=[account_type_id])
     
     def __repr__(self):
         return f"<UserProfile(id={self.id}, user_id={self.user_id})>"
@@ -168,8 +171,8 @@ class UserProfile(Base):
             "language": self.language,
             "preferences": self.preferences,
             "selected_theme": self.selected_theme,
-            "appearance_option_value_id": self.appearance_option_value_id,
-            "itheme_option_value_id": self.itheme_option_value_id,
+            "appearance_id": self.appearance_id,
+            "itheme_id": self.itheme_id,
             "avatar_display_option_value_id": self.avatar_display_option_value_id,
             "agree_to_marketing": self.agree_to_marketing,
             "agree_to_terms": self.agree_to_terms,
@@ -285,6 +288,32 @@ class OptionValue(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     
+    # Relationship to theme_config
+    theme_config = relationship("ThemeConfig", back_populates="option_value", uselist=False)
+    
     def __repr__(self):
         return f"<OptionValue(id={self.id}, value_name={self.value_name})>"
+
+
+class ThemeConfig(Base):
+    """Theme configuration attributes for appearance option values"""
+    __tablename__ = "theme_configs"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    option_value_id = Column(Integer, ForeignKey("option_values.id", ondelete="CASCADE"), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
+    text_color = Column(String(7), nullable=False)
+    background_color = Column(String(7), nullable=False)
+    menu_color = Column(String(7), nullable=False)
+    border_line_color = Column(String(7), nullable=False)
+    header_overlay_color = Column(String(9))
+    theme_metadata = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    # Relationship
+    option_value = relationship("OptionValue", back_populates="theme_config")
+    
+    def __repr__(self):
+        return f"<ThemeConfig(id={self.id}, name={self.name})>"
+
 
