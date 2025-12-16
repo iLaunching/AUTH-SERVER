@@ -22,7 +22,7 @@ class User(Base):
     first_name = Column(String(255))
     last_name = Column(String(255))
     role = Column(String(50), default="user")
-    subscription_tier = Column(String(50), default="free")
+    membership = Column(String(50), default="Individual")  # Individual or Enterprise
     email_verified = Column(Boolean, default=False)
     
     # OAuth fields
@@ -48,7 +48,7 @@ class User(Base):
             "first_name": self.first_name,
             "last_name": self.last_name,
             "role": self.role,
-            "subscription_tier": self.subscription_tier,
+            "membership": self.membership,
             "email_verified": self.email_verified,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "last_login": self.last_login.isoformat() if self.last_login else None,
@@ -127,8 +127,8 @@ class UserProfile(Base):
     selected_theme = Column(String(50), default="sun")  # Legacy field, kept for backwards compatibility
     
     # Option set foreign keys - actual column names in database
-    appearance_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
-    itheme_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
+    appearance_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True, default=6)
+    itheme_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True, default=10)
     avatar_display_option_value_id = Column(Integer, nullable=True, index=True)
     account_type_id = Column(Integer, ForeignKey("option_values.id", ondelete="SET NULL"), nullable=True, index=True)
     
