@@ -24,6 +24,7 @@ class User(Base):
     role = Column(String(50), default="user")
     membership = Column(String(50), default="Individual")  # Individual or Enterprise
     email_verified = Column(Boolean, default=False)
+    use_password = Column(Boolean, nullable=False, default=True)  # True for password auth, False for OAuth-only
     
     # OAuth fields
     oauth_provider = Column(String(50))  # e.g., 'google', 'facebook', 'microsoft'
