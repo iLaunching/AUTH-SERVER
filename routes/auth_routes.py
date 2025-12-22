@@ -99,6 +99,15 @@ class VerifyCodeResponse(BaseModel):
     verified: bool
     message: str
 
+class AddPasswordRequest(BaseModel):
+    """Request model for adding password to OAuth account"""
+    password: str = Field(..., min_length=8, max_length=128)
+
+class AddPasswordResponse(BaseModel):
+    """Response model for add password"""
+    success: bool
+    message: str
+
 # ============================================
 # Helper Functions
 # ============================================
@@ -272,7 +281,8 @@ async def signup(
             last_name=signup_data.last_name,
             email_verified=True,  # Mark as verified since they completed email verification
             oauth_provider="iLaunching",
-            oauth_provider_id=None  # Will be set to user.id after flush
+            oauth_provider_id=None,  # Will be set to user.id after flush
+            use_password=True  # iLaunching users use password authentication
         )
         db.add(new_user)
         await db.flush()  # Get user ID without committing
@@ -939,6 +949,53 @@ async def get_me(
         "user": current_user.to_dict(),
         "message": "Authenticated successfully"
     }
+
+
+@router.post("/auth/add-password", response_model=AddPasswordResponse)
+async def add_password(
+    request_data: AddPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Add password to OAuth user account.
+    Allows OAuth users to add password authentication as a backup login method.
+    """
+    try:
+        # Check if user already has a password
+        if current_user.use_password:
+            logger.warning("User already has password", user_id=str(current_user.id))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account already has password authentication enabled"
+            )
+        
+        # Hash the new password
+        password_hash = PasswordHandler.hash_password(request_data.password)
+        
+        # Update user record
+        current_user.password_hash = password_hash
+        current_user.use_password = True
+        
+        await db.commit()
+        await db.refresh(current_user)
+        
+        logger.info("Password added to OAuth account", user_id=str(current_user.id))
+        
+        return AddPasswordResponse(
+            success=True,
+            message="Password added successfully. You can now sign in with either method."
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to add password", user_id=str(current_user.id), error=str(e))
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to add password to account"
+        )
 
 
 @router.patch("/profile/onboarding")

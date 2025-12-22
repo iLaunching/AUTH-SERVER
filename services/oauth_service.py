@@ -420,6 +420,7 @@ class OAuthService:
                     # but then use OAuth are properly marked as OAuth users
                     user.oauth_provider = provider
                     user.oauth_provider_id = provider_user_id
+                    user.use_password = False  # OAuth users don't use password authentication
                     
                     logger.info("Updating user OAuth provider", 
                                user_id=str(user.id), 
@@ -460,7 +461,8 @@ class OAuthService:
                         oauth_provider=provider,
                         oauth_provider_id=provider_user_id,
                         email_verified=True,  # OAuth emails are pre-verified
-                        password_hash=None  # No password for OAuth users
+                        password_hash=None,  # No password for OAuth users
+                        use_password=False  # OAuth users don't use password authentication
                     )
                     db.add(new_user)
                     await db.flush()
