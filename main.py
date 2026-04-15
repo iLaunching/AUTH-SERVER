@@ -19,11 +19,13 @@ from config.database import init_database, init_redis, close_database, check_dat
 # Phase 2: Import authentication utilities
 from auth.jwt_manager import JWTManager
 from auth.password_handler import PasswordHandler
+from auth.token_claims import synapse_claims_from_profile, synapse_claims_from_user
 
 # Phase 2: Import database models
 from models.user import User, Session as UserSession, LoginAttempt, UserProfile, UserNavigation
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 # Import OAuth routes
 from routes.oauth_routes import router as oauth_router
@@ -369,7 +371,8 @@ async def signup(signup_data: SignupRequest, request: Request):
                     access_token = JWTManager.create_access_token(
                         user_id=str(new_user.id),
                         email=new_user.email,
-                        role=new_user.role
+                        role=new_user.role,
+                        extra_claims=synapse_claims_from_profile(user_profile),
                     )
                     refresh_token = JWTManager.create_refresh_token(
                         user_id=str(new_user.id),
@@ -473,9 +476,9 @@ async def login(login_data: LoginRequest, request: Request):
                     ip_address = get_client_ip(request)
                     user_agent = request.headers.get("User-Agent", "")
                     
-                    # Find user by email
+                    # Find user by email (profile for synapse_number in access JWT)
                     result = await db.execute(
-                        select(User).where(User.email == email)
+                        select(User).where(User.email == email).options(selectinload(User.profile))
                     )
                     user = result.scalar_one_or_none()
                     
@@ -535,7 +538,8 @@ async def login(login_data: LoginRequest, request: Request):
                     access_token = JWTManager.create_access_token(
                         user_id=str(user.id),
                         email=user.email,
-                        role=user.role
+                        role=user.role,
+                        extra_claims=synapse_claims_from_user(user),
                     )
                     refresh_token = JWTManager.create_refresh_token(
                         user_id=str(user.id),

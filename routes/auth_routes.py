@@ -15,6 +15,7 @@ import structlog
 
 from models.user import User, Session as UserSession, LoginAttempt, UserProfile, UserNavigation, OptionSet, OptionValue
 from auth.jwt_manager import JWTManager
+from auth.token_claims import synapse_claims_from_profile, synapse_claims_from_user
 from auth.password_handler import PasswordHandler
 from config.database import get_db
 from config.oauth import OAuthConfig
@@ -347,11 +348,12 @@ async def signup(
         db.add(session)
         await db.flush()  # Get session ID
         
-        # Generate tokens
+        # Generate tokens (synapse_number claim when profile already has it, e.g. rare reuse paths)
         access_token = JWTManager.create_access_token(
             user_id=str(new_user.id),
             email=new_user.email,
-            role=new_user.role
+            role=new_user.role,
+            extra_claims=synapse_claims_from_profile(user_profile),
         )
         refresh_token = JWTManager.create_refresh_token(
             user_id=str(new_user.id),
@@ -493,11 +495,12 @@ async def login(
         db.add(session)
         await db.flush()  # Get session ID
         
-        # Generate tokens
+        # Generate tokens (include synapse_number from user_profiles when set)
         access_token = JWTManager.create_access_token(
             user_id=str(user.id),
             email=user.email,
-            role=user.role
+            role=user.role,
+            extra_claims=synapse_claims_from_user(user),
         )
         refresh_token = JWTManager.create_refresh_token(
             user_id=str(user.id),
@@ -600,9 +603,9 @@ async def refresh_access_token(
                 detail="Invalid refresh token"
             )
         
-        # Get user
+        # Get user (profile for synapse_number claim)
         result = await db.execute(
-            select(User).where(User.id == user_id)
+            select(User).where(User.id == user_id).options(selectinload(User.profile))
         )
         user = result.scalar_one_or_none()
         
@@ -617,7 +620,8 @@ async def refresh_access_token(
         access_token = JWTManager.create_access_token(
             user_id=str(user.id),
             email=user.email,
-            role=user.role
+            role=user.role,
+            extra_claims=synapse_claims_from_user(user),
         )
         
         # Update session last accessed
@@ -750,9 +754,9 @@ async def check_email_for_signup(
         email = request_data.email.lower()
         password = request_data.password
         
-        # Check if user exists
+        # Check if user exists (load profile for synapse claim when logging in here)
         result = await db.execute(
-            select(User).where(User.email == email)
+            select(User).where(User.email == email).options(selectinload(User.profile))
         )
         existing_user = result.scalar_one_or_none()
         
@@ -783,39 +787,47 @@ async def check_email_for_signup(
                     detail="Incorrect password"
                 )
             
-            # Password correct - log user in
-            access_token = JWTManager.create_access_token(existing_user.id)
-            refresh_token = JWTManager.create_refresh_token(existing_user.id)
-            
-            # Create session
+            # Password correct — issue session + tokens (same pattern as /auth/login)
+            existing_user.last_login = datetime.utcnow()
+            device_info = {"user_agent": req.headers.get("user-agent", "unknown")}
             session = UserSession(
                 user_id=existing_user.id,
-                refresh_token=refresh_token,
-                ip_address=req.client.host,
-                user_agent=req.headers.get("user-agent", "unknown")
+                refresh_token_hash="",
+                device_info=device_info,
+                ip_address=get_client_ip(req),
+                user_agent=req.headers.get("user-agent", "unknown"),
+                expires_at=datetime.utcnow() + timedelta(days=30),
             )
             db.add(session)
-            
-            # Log successful login
+            await db.flush()
+
+            access_token = JWTManager.create_access_token(
+                user_id=str(existing_user.id),
+                email=existing_user.email,
+                role=existing_user.role or "user",
+                extra_claims=synapse_claims_from_user(existing_user),
+            )
+            refresh_token = JWTManager.create_refresh_token(
+                user_id=str(existing_user.id),
+                session_id=str(session.session_id),
+            )
+            session.refresh_token_hash = PasswordHandler.hash_password(refresh_token)
+
             await log_login_attempt(
                 db=db,
                 email=email,
-                ip_address=req.client.host,
+                ip_address=get_client_ip(req),
                 user_agent=req.headers.get("user-agent", "unknown"),
-                success=True
+                success=True,
             )
-            
+
             await db.commit()
             await db.refresh(existing_user)
-            
-            # Get user profile
-            profile_result = await db.execute(
-                select(UserProfile).where(UserProfile.user_id == existing_user.id)
-            )
-            profile = profile_result.scalar_one_or_none()
-            
-            logger.info("User logged in during signup flow", user_id=existing_user.id, email=email)
-            
+
+            profile = existing_user.profile
+
+            logger.info("User logged in during signup flow", user_id=str(existing_user.id), email=email)
+
             return CheckEmailSignupResponse(
                 action="login",
                 message="Welcome back! Logged in successfully.",
@@ -823,13 +835,13 @@ async def check_email_for_signup(
                 access_token=access_token,
                 refresh_token=refresh_token,
                 user={
-                    "id": existing_user.id,
+                    "id": str(existing_user.id),
                     "email": existing_user.email,
                     "email_verified": existing_user.email_verified,
                     "first_name": profile.first_name if profile else None,
                     "last_name": profile.last_name if profile else None,
                     "created_at": existing_user.created_at.isoformat(),
-                }
+                },
             )
         
         else:

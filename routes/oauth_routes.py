@@ -15,6 +15,7 @@ from services.oauth_service import oauth_service
 from config.oauth import OAuthConfig
 from config.database import get_db, async_session_maker
 from auth.jwt_manager import JWTManager
+from auth.token_claims import synapse_claims_for_user_id
 from auth.password_handler import PasswordHandler
 from models.user import Session as UserSession
 
@@ -210,10 +211,12 @@ async def google_callback(
                 await db.flush()
                 
                 # Generate JWT tokens
+                extra = await synapse_claims_for_user_id(db, user_dict["id"])
                 jwt_access_token = JWTManager.create_access_token(
                     user_id=str(user_dict['id']),
                     email=email,
-                    role=user_dict.get('role', 'user')
+                    role=user_dict.get('role', 'user'),
+                    extra_claims=extra,
                 )
                 jwt_refresh_token = JWTManager.create_refresh_token(
                     user_id=str(user_dict['id']),
@@ -420,10 +423,12 @@ async def facebook_callback(
                 await db.flush()
                 
                 # Generate JWT tokens
+                extra = await synapse_claims_for_user_id(db, user_dict["id"])
                 jwt_access_token = JWTManager.create_access_token(
                     user_id=str(user_dict['id']),
                     email=email,
-                    role=user_dict.get('role', 'user')
+                    role=user_dict.get('role', 'user'),
+                    extra_claims=extra,
                 )
                 jwt_refresh_token = JWTManager.create_refresh_token(
                     user_id=str(user_dict['id']),
@@ -634,10 +639,12 @@ async def microsoft_callback(
                 await db.flush()
                 
                 # Generate JWT tokens
+                extra = await synapse_claims_for_user_id(db, user_dict["id"])
                 jwt_access_token = JWTManager.create_access_token(
                     user_id=str(user_dict['id']),
                     email=email,
-                    role=user_dict.get('role', 'user')
+                    role=user_dict.get('role', 'user'),
+                    extra_claims=extra,
                 )
                 jwt_refresh_token = JWTManager.create_refresh_token(
                     user_id=str(user_dict['id']),

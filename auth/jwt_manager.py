@@ -30,7 +30,7 @@ class JWTManager:
             user_id: User's UUID
             email: User's email
             role: User's role (user, admin, etc.)
-            extra_claims: Additional claims to include in token
+            extra_claims: Additional claims to include in token (e.g. {"synapse_number": "447..."} when set on user_profiles)
             
         Returns:
             JWT access token string
