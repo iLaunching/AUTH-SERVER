@@ -18,6 +18,7 @@ from auth.jwt_manager import JWTManager
 from auth.token_claims import synapse_claims_for_user_id
 from auth.password_handler import PasswordHandler
 from models.user import Session as UserSession
+from utils.oauth_redirect_validation import is_allowed_post_oauth_redirect
 
 logger = structlog.get_logger()
 
@@ -83,12 +84,16 @@ async def google_login(
             status_code=503,
             detail="Google OAuth is not configured on the server"
         )
-    
+
+    effective_redirect = (redirect_url or "").strip() or OAuthConfig.FRONTEND_URL
+    if not is_allowed_post_oauth_redirect(effective_redirect):
+        raise HTTPException(status_code=400, detail="Invalid redirect_url")
+
     # Generate state for CSRF protection
     state = generate_state()
     oauth_states[state] = {
         'created_at': datetime.utcnow(),
-        'redirect_url': redirect_url or OAuthConfig.FRONTEND_URL
+        'redirect_url': effective_redirect
     }
     
     # Clean up old states
@@ -306,12 +311,16 @@ async def facebook_login(request: Request, redirect_url: Optional[str] = None):
             status_code=503,
             detail="Facebook OAuth is not configured on the server"
         )
-    
+
+    effective_redirect = (redirect_url or "").strip() or OAuthConfig.FRONTEND_URL
+    if not is_allowed_post_oauth_redirect(effective_redirect):
+        raise HTTPException(status_code=400, detail="Invalid redirect_url")
+
     # Generate state for CSRF protection
     state = generate_state()
     oauth_states[state] = {
         'created_at': datetime.utcnow(),
-        'redirect_url': redirect_url or OAuthConfig.FRONTEND_URL
+        'redirect_url': effective_redirect
     }
     
     # Clean up old states
@@ -518,12 +527,16 @@ async def microsoft_login(request: Request, redirect_url: Optional[str] = None):
             status_code=503,
             detail="Microsoft OAuth is not configured on the server"
         )
-    
+
+    effective_redirect = (redirect_url or "").strip() or OAuthConfig.FRONTEND_URL
+    if not is_allowed_post_oauth_redirect(effective_redirect):
+        raise HTTPException(status_code=400, detail="Invalid redirect_url")
+
     # Generate state for CSRF protection
     state = generate_state()
     oauth_states[state] = {
         'created_at': datetime.utcnow(),
-        'redirect_url': redirect_url or OAuthConfig.FRONTEND_URL
+        'redirect_url': effective_redirect
     }
     
     # Clean up old states
