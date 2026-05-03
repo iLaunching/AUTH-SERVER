@@ -25,6 +25,20 @@ logger = structlog.get_logger()
 router = APIRouter()
 security = HTTPBearer()
 
+
+def _external_oauth_provider_for_check_email(raw: Optional[str]) -> Optional[str]:
+    """
+    Email/password users created in-app often have oauth_provider set to iLaunching (see signup).
+    Only Google/Facebook/Microsoft-style providers should trigger OAuth login — mirrors landing `hasOAuthProvider`.
+    """
+    if raw is None or not str(raw).strip():
+        return None
+    p = str(raw).strip().lower()
+    if p == "ilaunching":
+        return None
+    return str(raw).strip()
+
+
 # ============================================
 # Request/Response Models
 # ============================================
@@ -196,21 +210,23 @@ async def check_email(
         user = result.scalar_one_or_none()
         
         if user:
-            # Check if user signed up via OAuth
-            if user.oauth_provider:
-                logger.info("Email check - OAuth user", email=request.email, provider=user.oauth_provider)
+            ext = _external_oauth_provider_for_check_email(user.oauth_provider)
+            if ext:
+                logger.info("Email check - OAuth user", email=request.email, provider=ext)
                 return CheckEmailResponse(
                     exists=True,
-                    message=f"This account was created using {user.oauth_provider.title()}. Please sign in with {user.oauth_provider.title()} instead.",
-                    oauth_provider=user.oauth_provider
+                    message=(
+                        f"This account was created using {ext.title()}. "
+                        f"Please sign in with {ext.title()} instead."
+                    ),
+                    oauth_provider=ext,
                 )
-            else:
-                logger.info("Email check - exists", email=request.email)
-                return CheckEmailResponse(
-                    exists=True,
-                    message="Email found. Please enter your password to login.",
-                    oauth_provider=None
-                )
+            logger.info("Email check - password user", email=request.email)
+            return CheckEmailResponse(
+                exists=True,
+                message="Email found. Please enter your password to login.",
+                oauth_provider=None,
+            )
         else:
             logger.info("Email check - new user", email=request.email)
             return CheckEmailResponse(

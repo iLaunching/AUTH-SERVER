@@ -92,13 +92,6 @@ async def lifespan(app: FastAPI):
     await close_database()
 
 # Pydantic models
-class CheckEmailRequest(BaseModel):
-    email: EmailStr
-
-class CheckEmailResponse(BaseModel):
-    exists: bool
-    message: str
-
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str
@@ -234,51 +227,7 @@ async def log_login_attempt(
         logger.error("Failed to log login attempt", error=str(e))
         await db.rollback()
 
-@app.post("/api/v1/auth/check-email", response_model=CheckEmailResponse)
-async def check_email(request: CheckEmailRequest):
-    """Check if an email exists in the database (Phase 2: Uses database if available)"""
-    email = request.email.lower()
-    
-    # Phase 2: Try database first if available
-    if database_available:
-        try:
-            from config.database import async_session_maker
-            if async_session_maker:
-                async with async_session_maker() as db:
-                    result = await db.execute(
-                        select(User).where(User.email == email)
-                    )
-                    user = result.scalar_one_or_none()
-                    
-                    if user:
-                        logger.info("Email check - exists (database)", email=email)
-                        return CheckEmailResponse(
-                            exists=True,
-                            message="Welcome back! Please enter your password to login."
-                        )
-                    else:
-                        logger.info("Email check - new user (database)", email=email)
-                        return CheckEmailResponse(
-                            exists=False,
-                            message="Welcome! Let's create your account."
-                        )
-        except Exception as e:
-            logger.error("Database email check failed, falling back to in-memory", error=str(e))
-            # Fall through to in-memory check
-    
-    # Phase 1: Fallback to in-memory storage
-    exists = email in users_db
-    
-    if exists:
-        return CheckEmailResponse(
-            exists=True,
-            message="Welcome back! Please enter your password to login."
-        )
-    else:
-        return CheckEmailResponse(
-            exists=False,
-            message="Welcome! Let's create your account."
-        )
+# POST /api/v1/auth/check-email is implemented in routes/auth_routes.py (returns oauth_provider for OAuth users).
 
 @app.post("/api/v1/auth/signup", response_model=AuthResponse, status_code=201)
 async def signup(signup_data: SignupRequest, request: Request):
