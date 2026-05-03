@@ -64,12 +64,17 @@ def cleanup_expired_states():
 # ============================================
 
 @router.get("/google/login")
-async def google_login(request: Request, redirect_url: Optional[str] = None):
+async def google_login(
+    request: Request,
+    redirect_url: Optional[str] = None,
+    login_hint: Optional[str] = None,
+):
     """
     Initiate Google OAuth login flow
     
     Query params:
         redirect_url: Optional frontend URL to redirect to after authentication
+        login_hint: Optional email to bias Google's account picker (same as web landing).
     
     Returns redirect to Google's OAuth consent page
     """
@@ -93,7 +98,8 @@ async def google_login(request: Request, redirect_url: Optional[str] = None):
     try:
         auth_url = oauth_service.get_google_auth_url(
             redirect_uri=OAuthConfig.GOOGLE_REDIRECT_URI,
-            state=state
+            state=state,
+            login_hint=login_hint,
         )
         
         logger.info("Initiating Google OAuth login", state=state)

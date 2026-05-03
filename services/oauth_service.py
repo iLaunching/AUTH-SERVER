@@ -4,6 +4,7 @@ Handles OAuth authentication flows for various providers
 """
 
 from typing import Dict, Optional, Tuple
+from urllib.parse import urlencode
 import httpx
 import structlog
 from authlib.integrations.starlette_client import OAuth
@@ -93,13 +94,19 @@ class OAuthService:
         else:
             logger.warning("Microsoft OAuth not configured - skipping setup")
     
-    def get_google_auth_url(self, redirect_uri: str, state: str) -> str:
+    def get_google_auth_url(
+        self,
+        redirect_uri: str,
+        state: str,
+        login_hint: Optional[str] = None,
+    ) -> str:
         """
         Generate Google OAuth authorization URL
         
         Args:
             redirect_uri: Where Google should redirect after authentication
             state: Random state for CSRF protection
+            login_hint: Optional email to bias account chooser (matches web `login_hint`).
             
         Returns:
             Authorization URL string
@@ -116,11 +123,13 @@ class OAuthService:
             'access_type': 'offline',
             'prompt': 'select_account',
         }
+        if login_hint:
+            params['login_hint'] = login_hint
         
-        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        query_string = urlencode(params)
         auth_url = f"{OAuthConfig.GOOGLE_AUTHORIZE_URL}?{query_string}"
         
-        logger.info("Generated Google auth URL", state=state)
+        logger.info("Generated Google auth URL", state=state, has_login_hint=bool(login_hint))
         return auth_url
     
     async def exchange_google_code(self, code: str, redirect_uri: str) -> Dict:
