@@ -39,6 +39,33 @@ def _external_oauth_provider_for_check_email(raw: Optional[str]) -> Optional[str
     return str(raw).strip()
 
 
+def _external_oauth_provider_from_user(user: User) -> Optional[str]:
+    """
+    Use oauth_provider_id together with oauth_provider.
+
+    Native signups set oauth_provider_id to str(user.id) after flush; external OAuth stores the
+    provider subject id, which is never the user's UUID. This avoids mis-routing when oauth_provider
+    alone is wrong or legacy.
+    """
+    uid = str(user.id)
+    opid = (user.oauth_provider_id or "").strip()
+
+    if opid == uid:
+        return None
+
+    ext = _external_oauth_provider_for_check_email(user.oauth_provider)
+    if ext:
+        return ext.lower()
+
+    if opid and opid != uid:
+        raw = (user.oauth_provider or "").strip()
+        if raw and raw.lower() != "ilaunching":
+            return raw.lower()
+        return "oauth"
+
+    return None
+
+
 # ============================================
 # Request/Response Models
 # ============================================
@@ -52,10 +79,18 @@ class CheckEmailResponse(BaseModel):
     exists: bool
     message: str
     oauth_provider: Optional[str] = None  # e.g., 'google', 'microsoft' if user signed up via OAuth
-    
+    use_password: Optional[bool] = None  # When exists=True, mirrors User.use_password (OAuth-only users are False)
+
     class Config:
         # Always include fields even when None
-        json_schema_extra = {"example": {"exists": True, "message": "Email found", "oauth_provider": None}}
+        json_schema_extra = {
+            "example": {
+                "exists": True,
+                "message": "Email found",
+                "oauth_provider": None,
+                "use_password": True,
+            }
+        }
 
 class SignupRequest(BaseModel):
     """Request model for user signup"""
@@ -210,29 +245,64 @@ async def check_email(
         user = result.scalar_one_or_none()
         
         if user:
-            ext = _external_oauth_provider_for_check_email(user.oauth_provider)
+            ext = _external_oauth_provider_from_user(user)
             if ext:
                 logger.info("Email check - OAuth user", email=request.email, provider=ext)
-                return CheckEmailResponse(
-                    exists=True,
-                    message=(
+                if ext == "oauth":
+                    oauth_msg = (
+                        "This account was created with social sign-in. "
+                        "Please use the same provider you used to register."
+                    )
+                else:
+                    oauth_msg = (
                         f"This account was created using {ext.title()}. "
                         f"Please sign in with {ext.title()} instead."
-                    ),
+                    )
+                return CheckEmailResponse(
+                    exists=True,
+                    message=oauth_msg,
                     oauth_provider=ext,
+                    use_password=user.use_password,
+                )
+            # OAuth-only accounts should never fall through to password UI if metadata is inconsistent.
+            if user.use_password is False:
+                fb = _external_oauth_provider_for_check_email(user.oauth_provider)
+                inferred = fb.lower() if fb else "oauth"
+                logger.info(
+                    "Email check - OAuth user (use_password=False fallback)",
+                    email=request.email,
+                    inferred=inferred,
+                )
+                if inferred == "oauth":
+                    oauth_fb_msg = (
+                        "This account was created with social sign-in. "
+                        "Please use the same provider you used to register."
+                    )
+                else:
+                    oauth_fb_msg = (
+                        f"This account was created using {inferred.title()}. "
+                        f"Please sign in with {inferred.title()} instead."
+                    )
+                return CheckEmailResponse(
+                    exists=True,
+                    message=oauth_fb_msg,
+                    oauth_provider=inferred,
+                    use_password=False,
                 )
             logger.info("Email check - password user", email=request.email)
             return CheckEmailResponse(
                 exists=True,
                 message="Email found. Please enter your password to login.",
                 oauth_provider=None,
+                use_password=user.use_password,
             )
         else:
             logger.info("Email check - new user", email=request.email)
             return CheckEmailResponse(
                 exists=False,
                 message="Welcome! Let's create your account.",
-                oauth_provider=None
+                oauth_provider=None,
+                use_password=None,
             )
             
     except Exception as e:
