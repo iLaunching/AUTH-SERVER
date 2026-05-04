@@ -524,8 +524,10 @@ async def login(
                 detail="Invalid email or password"
             )
         
-        # Check if user signed up via OAuth (has no password)
-        if user.oauth_provider:
+        # Block password login only for **external** OAuth-only accounts (Google/Facebook/…).
+        # Native email/password signups set oauth_provider to "iLaunching" and use_password=True (see /auth/signup).
+        external_oauth = _external_oauth_provider_from_user(user)
+        if external_oauth and not user.use_password:
             # Log failed attempt
             await log_login_attempt(
                 db=db,
@@ -535,12 +537,17 @@ async def login(
                 success=False,
                 failure_reason="oauth_user_password_login_blocked"
             )
-            logger.warning("Login blocked - OAuth user trying password login", 
-                          email=email, 
-                          oauth_provider=user.oauth_provider)
+            logger.warning(
+                "Login blocked - OAuth-only user trying password login",
+                email=email,
+                oauth_provider=user.oauth_provider,
+                external_oauth=external_oauth,
+                use_password=user.use_password,
+            )
+            label = (user.oauth_provider or external_oauth).strip().title()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"This account was created using {user.oauth_provider.title()}. Please sign in with {user.oauth_provider.title()} instead."
+                detail=f"This account was created using {label}. Please sign in with {label} instead."
             )
         
         # Verify password
