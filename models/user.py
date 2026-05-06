@@ -115,8 +115,7 @@ class UserProfile(Base):
     # Basic profile fields
     first_name = Column(Text)
     last_name = Column(Text)
-    # Ear / routing — populated by API server onboarding; mirrored in JWT when set
-    synapse_number = Column(String(20), nullable=True, unique=True)
+    # Ear / routing — synapse_number moved to api-server smart_hubs table (keep auth-api resilient)
     phone = Column(String(20))
     bio = Column(Text)
     timezone = Column(String(50), default="UTC")
