@@ -30,6 +30,7 @@ from sqlalchemy.orm import selectinload
 # Import OAuth routes
 from routes.oauth_routes import router as oauth_router
 from routes.auth_routes import router as auth_router
+from routes.verification_routes import router as verification_router, webhook_router as verification_webhook_router
 
 # Configure structured logging
 structlog.configure(
@@ -136,6 +137,9 @@ app.add_middleware(
 app.include_router(oauth_router, prefix="/api/v1")
 # Include Auth routes (signup, login, verification, etc.)
 app.include_router(auth_router, prefix="/api/v1")
+# Include phone/carrier verification (feature-flagged in routes)
+app.include_router(verification_router, prefix="/api/v1")
+app.include_router(verification_webhook_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
