@@ -36,13 +36,6 @@ def _parse_vonage_json(response: httpx.Response) -> dict:
     try:
         return response.json()
     except json.JSONDecodeError:
-        prefix = (response.text or "")[:300].replace("\n", " ")
-        logger.warning(
-            "Vonage non-JSON response body",
-            status_code=response.status_code,
-            content_type=response.headers.get("content-type", ""),
-            body_prefix=prefix,
-        )
         return {}
 
 
@@ -54,14 +47,21 @@ def _raise_for_status(response: httpx.Response) -> None:
     body = _parse_vonage_json(response)
     detail = body.get("detail", "") if isinstance(body, dict) else ""
 
-    logger.warning("Vonage API error", status_code=code, detail=detail)
+    ct = response.headers.get("content-type", "")
+    snippet = ""
+    if response.text and "json" not in ct.lower():
+        snippet = (response.text[:280]).replace("\n", " ").strip()
+
+    logger.warning(
+        "Vonage API error",
+        status_code=code,
+        detail=detail,
+        content_type=ct or None,
+        body_prefix=snippet or None,
+    )
 
     # HTML 403/401 from Vonage edge = JWT rejected or wrong app/key pairing (not JSON API body).
     if code == 401:
-        logger.warning(
-            "Vonage returned 401 — JWT or Application API credentials rejected",
-            hint="Private key must belong to the same Vonage Application as VONAGE_APPLICATION_ID",
-        )
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
@@ -70,10 +70,6 @@ def _raise_for_status(response: httpx.Response) -> None:
             },
         )
     if code == 403:
-        logger.warning(
-            "Vonage returned 403 Forbidden (often HTML) — application JWT not accepted at edge",
-            hint="Regenerate keypair in Vonage Dashboard for this Application; match VONAGE_APPLICATION_ID; check server clock (JWT uses short expiry)",
-        )
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
@@ -183,15 +179,18 @@ def _build_jwt() -> str:
         )
 
     now = int(time.time())
+    # Vonage Application JWT: include nbf + acl per Network API docs (missing claims often yield HTML 403).
     payload = {
         "application_id": s.vonage_application_id,
         "iat": now,
-        "exp": now + 60,
+        "nbf": now - 60,
+        "exp": now + 900,
         "jti": str(uuid.uuid4()),
+        "acl": {"paths": {}},
     }
     try:
         signing_key = _load_rsa_private_key(s.vonage_private_key)
-        return jwt.encode(payload, signing_key, algorithm="RS256")
+        return jwt.encode(payload, signing_key, algorithm="RS256", headers={"typ": "JWT"})
     except Exception as exc:
         # Log type + PEM banner only — never log str(exc); library messages could change over time.
         logger.error(
