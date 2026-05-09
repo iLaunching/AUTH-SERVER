@@ -1,5 +1,4 @@
 import os
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -45,19 +44,15 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-_BEGIN_PKCS8 = "-----BEGIN PRIVATE KEY-----"
-_END_PKCS8 = "-----END PRIVATE KEY-----"
-
-
 def _normalize_vonage_private_key(raw: str) -> str:
     """
-    Normalize Vonage application private key PEM from env.
+    Normalize Vonage application private key from env (PEM or raw base64 DER).
 
     Does not accept weaker credentials: you still must supply the real private key
-    bytes; this only fixes formatting so the same secret parses correctly.
+    material; this only fixes formatting (BOM, quotes, newlines, literal \\n).
 
-    Handles: UTF-8 BOM, outer quotes, literal \\n / \\r\\n from one-line env vars,
-    Windows newlines, and PKCS#8 body-only pastes (base64 without PEM headers).
+    Raw PKCS#8 / PKCS#1 DER as base64 (no BEGIN/END lines) is loaded in
+    vonage_service via load_der_private_key.
     """
     if not raw:
         return ""
@@ -69,21 +64,7 @@ def _normalize_vonage_private_key(raw: str) -> str:
         key = key[1:-1].strip()
     key = key.replace("\\r\\n", "\n").replace("\\r", "\n").replace("\\n", "\n")
     key = key.replace("\r\n", "\n").replace("\r", "\n")
-
-    lower = key.lower()
-    has_private_header = "begin private key" in lower or "begin rsa private key" in lower
-    if not has_private_header:
-        # Raw PKCS#8 / PKCS#1 base64 only (no PEM lines) — wrap so cryptography accepts it
-        body = "".join(key.split())
-        if len(body) >= 64 and re.fullmatch(r"[A-Za-z0-9+/=]+", body):
-            # Prefer PKCS#8; Vonage dashboard downloads are usually PKCS#8 PEM
-            return f"{_BEGIN_PKCS8}\n{_chunk_base64_lines(body)}\n{_END_PKCS8}\n"
-
     return key
-
-
-def _chunk_base64_lines(body: str, width: int = 64) -> str:
-    return "\n".join(body[i : i + width] for i in range(0, len(body), width))
 
 
 @lru_cache

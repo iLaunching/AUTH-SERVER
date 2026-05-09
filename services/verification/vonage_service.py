@@ -1,3 +1,5 @@
+import base64
+import re
 from dataclasses import dataclass
 
 import httpx
@@ -59,21 +61,37 @@ def _pem_header_hint(pem: str) -> str | None:
     return None
 
 
-def _rsa_private_key_from_pem(pem: str):
-    """
-    Load PEM into a Cryptography RSAPrivateKey for PyJWT RS256.
+def _looks_like_private_key_filename_only(value: str) -> bool:
+    """Users sometimes paste the download filename instead of file contents."""
+    t = value.strip()
+    if len(t) > 400:
+        return False
+    if "BEGIN" in t.upper():
+        return False
+    return bool(re.match(r"^private[_a-zA-Z0-9.-]+\s*$", t))
 
-    Passing the PEM string directly can break with some PyJWT/cryptography
-    combinations (internal RSA type without `.sign`).
+
+def _load_rsa_private_key(material: str):
     """
-    pem_bytes = pem.encode("utf-8")
-    return serialization.load_pem_private_key(pem_bytes, password=None)
+    RS256 signing key: PEM text, or raw PKCS#8 / PKCS#1 DER encoded as base64
+    (common Vonage download without BEGIN/END lines).
+    """
+    material_bytes = material.encode("utf-8")
+    try:
+        return serialization.load_pem_private_key(material_bytes, password=None)
+    except Exception:
+        pass
+    body = "".join(material.split())
+    if len(body) >= 64 and re.fullmatch(r"[A-Za-z0-9+/=]+", body):
+        der = base64.b64decode(body)
+        return serialization.load_der_private_key(der, password=None)
+    raise ValueError("could not deserialize private key")
 
 
 def _build_jwt() -> str:
     """
     Vonage Application JWT (RS256).
-    Uses `VONAGE_APPLICATION_ID` + `VONAGE_PRIVATE_KEY` (PEM).
+    Uses `VONAGE_APPLICATION_ID` + `VONAGE_PRIVATE_KEY` (PEM or raw base64 DER).
     """
     import time
     import uuid
@@ -110,6 +128,15 @@ def _build_jwt() -> str:
                 "code": "VONAGE_WRONG_PEM_KIND",
             },
         )
+    if _looks_like_private_key_filename_only(s.vonage_private_key):
+        logger.error("VONAGE_PRIVATE_KEY looks like a filename; paste the file contents, not the name")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "VONAGE_PRIVATE_KEY must be the key file contents (PEM or base64), not the filename.",
+                "code": "VONAGE_KEY_FILENAME_NOT_CONTENT",
+            },
+        )
 
     now = int(time.time())
     payload = {
@@ -119,7 +146,7 @@ def _build_jwt() -> str:
         "jti": str(uuid.uuid4()),
     }
     try:
-        signing_key = _rsa_private_key_from_pem(s.vonage_private_key)
+        signing_key = _load_rsa_private_key(s.vonage_private_key)
         return jwt.encode(payload, signing_key, algorithm="RS256")
     except Exception as exc:
         # Log type + PEM banner only — never log str(exc); library messages could change over time.
