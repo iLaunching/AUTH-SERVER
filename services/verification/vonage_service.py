@@ -50,6 +50,15 @@ def _raise_for_status(response: httpx.Response) -> None:
     raise HTTPException(502, {"error": "Verification service error.", "code": "VONAGE_ERROR"})
 
 
+def _pem_header_hint(pem: str) -> str | None:
+    """First PEM banner line only (safe to log). Helps debug wrong paste (cert vs key)."""
+    for line in pem.splitlines():
+        line = line.strip()
+        if line.startswith("-----BEGIN"):
+            return line[:120]
+    return None
+
+
 def _rsa_private_key_from_pem(pem: str):
     """
     Load PEM into a Cryptography RSAPrivateKey for PyJWT RS256.
@@ -91,6 +100,7 @@ def _build_jwt() -> str:
             "Vonage JWT signing failed",
             exc_type=type(exc).__name__,
             exc_message=str(exc),
+            pem_header=_pem_header_hint(s.vonage_private_key),
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
