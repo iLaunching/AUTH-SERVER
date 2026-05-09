@@ -5,7 +5,8 @@ import structlog
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import vonage_service, rate_limiter, db_queries
+from . import rate_limiter, db_queries, vonage_service
+from .vonage_service import SilentAuthUnavailableError
 from .phone_validator import validate_and_normalise
 from .redis_helpers import delete, get_json, keys, set_json
 from .schemas import (
@@ -42,7 +43,20 @@ async def start_verification(
             trust_level=TrustLevel(existing["trust_level"]),
         )
 
-    result = await vonage_service.start_verification(e164)
+    silent_auth_skipped = False
+    try:
+        result = await vonage_service.start_verification(e164)
+        channel = VerificationChannel.SILENT_AUTH
+    except SilentAuthUnavailableError as exc:
+        # Vonage 412: Network Registry / coverage / carrier — continue with SMS so the user can still verify.
+        logger.info(
+            "Silent auth unavailable; starting SMS verification",
+            phone=e164,
+            reason=exc.reason,
+        )
+        result = await vonage_service.start_sms_verification(e164)
+        channel = VerificationChannel.SMS
+        silent_auth_skipped = True
 
     state = PendingVerificationState(
         request_id=result.request_id,
@@ -69,7 +83,8 @@ async def start_verification(
         status=VerificationStatus.PENDING,
         request_id=result.request_id,
         check_url=result.check_url,
-        channel=VerificationChannel.SILENT_AUTH,
+        channel=channel,
+        silent_auth_skipped=silent_auth_skipped,
     )
 
 

@@ -46,6 +46,8 @@ class StartVerificationResponse(BaseModel):
     check_url: str | None = None
     channel: VerificationChannel | None = None
     trust_level: TrustLevel | None = None
+    #: True when Vonage rejected silent_auth (412) and the server started SMS-only instead.
+    silent_auth_skipped: bool = False
 
 
 class SmsFallbackRequest(BaseModel):

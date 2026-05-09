@@ -14,6 +14,15 @@ from .settings import get_verification_settings
 
 logger = structlog.get_logger()
 
+
+class SilentAuthUnavailableError(Exception):
+    """Vonage returned 412 — silent auth cannot be initiated (coverage, Network Registry, carrier, etc.)."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
 # Official Vonage Python SDK uses api.nexmo.com + POST /v2/verify (see vonage_verify.Verify).
 VONAGE_API_BASE = "https://api.nexmo.com/v2/verify"
 
@@ -139,6 +148,16 @@ def _raise_for_status(response: httpx.Response) -> None:
             detail={
                 "error": msg,
                 "code": "VONAGE_INVALID_PARAMS",
+                "vonage_invalid_parameters": invalid_params,
+            },
+        )
+    if code == 412:
+        msg = detail or "Silent authentication cannot be initiated for this number or network."
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "error": msg,
+                "code": "SILENT_AUTH_UNAVAILABLE",
                 "vonage_invalid_parameters": invalid_params,
             },
         )
@@ -296,8 +315,16 @@ async def start_verification(phone_number: str) -> VerifyStartResult:
                 json=payload,
                 headers=_vonage_http_headers(token),
             )
-            _raise_for_status(response)
             data = _parse_vonage_json(response)
+            if response.status_code == 412:
+                reason = _vonage_problem_summary(data) or "The silent auth verification cannot be initiated."
+                logger.warning(
+                    "Vonage silent_auth cannot be initiated (412)",
+                    detail=reason,
+                    phone_e164=phone_number,
+                )
+                raise SilentAuthUnavailableError(reason)
+            _raise_for_status(response)
             request_id = data.get("request_id") if isinstance(data, dict) else None
             if not request_id:
                 raise HTTPException(
@@ -308,6 +335,8 @@ async def start_verification(phone_number: str) -> VerifyStartResult:
                 request_id=request_id,
                 check_url=data.get("check_url") if isinstance(data, dict) else None,
             )
+        except SilentAuthUnavailableError:
+            raise
         except HTTPException:
             raise
         except httpx.RequestError as exc:
