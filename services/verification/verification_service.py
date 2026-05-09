@@ -69,7 +69,70 @@ async def start_verification(
         status=VerificationStatus.PENDING,
         request_id=result.request_id,
         check_url=result.check_url,
-        channel=VerificationChannel.SILENT_AUTH if result.check_url else VerificationChannel.SMS,
+        channel=VerificationChannel.SILENT_AUTH,
+    )
+
+
+async def fallback_to_sms_verification(
+    _db: AsyncSession,
+    user_id: str,
+    request_id: str,
+    ip: str | None,
+    user_agent: str | None,
+) -> StartVerificationResponse:
+    """
+    Cancel the silent_auth Vonage session (best effort) and start a new SMS-only verification.
+    Redis state moves to the new request_id so `/verify/check` and webhooks stay consistent.
+    """
+    s = get_verification_settings()
+
+    await rate_limiter.check_limits(ip, None)
+
+    state_data = await get_json(keys().verify_request(request_id))
+    if not state_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Verification session not found or expired.", "code": "REQUEST_NOT_FOUND"},
+        )
+
+    state = PendingVerificationState(**state_data)
+    if state.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "Not allowed for this verification session.", "code": "FORBIDDEN"},
+        )
+
+    await vonage_service.cancel_verification(request_id)
+
+    result = await vonage_service.start_sms_verification(state.phone_number)
+
+    await delete(keys().verify_request(request_id))
+
+    new_state = PendingVerificationState(
+        request_id=result.request_id,
+        user_id=user_id,
+        phone_number=state.phone_number,
+        started_at=time.time(),
+    )
+    await set_json(
+        keys().verify_request(result.request_id),
+        new_state.model_dump(),
+        s.redis_ttl_verify_request,
+    )
+
+    asyncio.create_task(_safe_create_attempt(
+        user_id=user_id,
+        phone_number=state.phone_number,
+        vonage_request_id=result.request_id,
+        ip_address=ip,
+        user_agent=user_agent,
+    ))
+
+    return StartVerificationResponse(
+        status=VerificationStatus.PENDING,
+        request_id=result.request_id,
+        check_url=result.check_url,
+        channel=VerificationChannel.SMS,
     )
 
 

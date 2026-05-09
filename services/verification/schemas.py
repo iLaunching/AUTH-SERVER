@@ -48,6 +48,20 @@ class StartVerificationResponse(BaseModel):
     trust_level: TrustLevel | None = None
 
 
+class SmsFallbackRequest(BaseModel):
+    """Switch from an active silent_auth session to SMS OTP (new Vonage request_id)."""
+
+    request_id: str
+
+    @field_validator("request_id")
+    @classmethod
+    def request_id_nonempty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("request_id is required")
+        return v
+
+
 class CheckSmsCodeRequest(BaseModel):
     request_id: str
     code: str

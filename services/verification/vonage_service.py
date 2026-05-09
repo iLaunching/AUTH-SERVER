@@ -233,22 +233,30 @@ def _build_jwt() -> str:
         ) from exc
 
 
-async def start_verification(phone_number: str) -> VerifyStartResult:
+def _verify_v2_payload_base() -> dict:
     s = get_verification_settings()
+    return {"brand": s.vonage_brand_name[:16]}
 
+
+async def start_verification(phone_number: str) -> VerifyStartResult:
+    """
+    Silent Authentication only — does **not** enqueue SMS in the same Vonage request.
+    Use `start_sms_verification` (or `/verify/fallback-sms`) when the user needs an SMS code.
+    """
     to_digits = _e164_to_vonage_phone(phone_number)
-
     token = _build_jwt()
 
+    # coverage_check=false: async behaviour; always returns check_url when possible instead of
+    # synchronously failing over when silent_auth coverage is unclear (Verify API v2).
     payload = {
-        "brand": s.vonage_brand_name[:16],
+        **_verify_v2_payload_base(),
+        "coverage_check": False,
         "workflow": [
             {"channel": "silent_auth", "to": to_digits},
-            {"channel": "sms", "to": to_digits},
         ],
     }
 
-    logger.info("Starting verification", phone_e164=phone_number, vonage_to=to_digits)
+    logger.info("Starting silent_auth verification", phone_e164=phone_number, vonage_to=to_digits)
 
     async with _get_client() as client:
         try:
@@ -277,6 +285,70 @@ async def start_verification(phone_number: str) -> VerifyStartResult:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"error": "Verification service unreachable.", "code": "VONAGE_NETWORK"},
             )
+
+
+async def start_sms_verification(phone_number: str) -> VerifyStartResult:
+    """SMS OTP only — used after silent_auth or when the user explicitly requests a text code."""
+    to_digits = _e164_to_vonage_phone(phone_number)
+    token = _build_jwt()
+    payload = {
+        **_verify_v2_payload_base(),
+        "workflow": [
+            {"channel": "sms", "to": to_digits},
+        ],
+    }
+
+    logger.info("Starting SMS verification", phone_e164=phone_number, vonage_to=to_digits)
+
+    async with _get_client() as client:
+        try:
+            response = await client.post(
+                VONAGE_API_BASE,
+                json=payload,
+                headers=_vonage_http_headers(token),
+            )
+            _raise_for_status(response)
+            data = _parse_vonage_json(response)
+            request_id = data.get("request_id") if isinstance(data, dict) else None
+            if not request_id:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail={"error": "Invalid response from verification provider.", "code": "VONAGE_BAD_RESPONSE"},
+                )
+            return VerifyStartResult(
+                request_id=request_id,
+                check_url=data.get("check_url") if isinstance(data, dict) else None,
+            )
+        except HTTPException:
+            raise
+        except httpx.RequestError as exc:
+            logger.error("Vonage network error", error=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"error": "Verification service unreachable.", "code": "VONAGE_NETWORK"},
+            )
+
+
+async def cancel_verification(request_id: str) -> None:
+    """Best-effort cancel of an in-flight Vonage verify session before starting another."""
+    async with _get_client() as client:
+        try:
+            token = _build_jwt()
+            response = await client.delete(
+                f"{VONAGE_API_BASE}/{request_id}",
+                headers=_vonage_http_headers(token),
+            )
+            if response.status_code in (204, 404):
+                return
+            if response.is_success:
+                return
+            logger.warning(
+                "Vonage cancel verification returned unexpected status",
+                status_code=response.status_code,
+                request_id=request_id,
+            )
+        except httpx.RequestError as exc:
+            logger.warning("Vonage cancel verification failed", error=str(exc), request_id=request_id)
 
 
 async def check_verification_code(request_id: str, code: str) -> None:

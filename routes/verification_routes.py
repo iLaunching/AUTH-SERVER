@@ -14,6 +14,7 @@ from routes.auth_routes import get_current_user
 from services.verification.schemas import (
     CheckSmsCodeRequest,
     CheckSmsCodeResponse,
+    SmsFallbackRequest,
     StartVerificationRequest,
     StartVerificationResponse,
     VerificationStatusResponse,
@@ -82,6 +83,24 @@ async def verify_check(
         code=body.code,
         user_id=str(current_user.id),
         ip=_client_ip(request),
+    )
+
+
+@router.post("/fallback-sms", response_model=StartVerificationResponse, status_code=status.HTTP_202_ACCEPTED)
+async def verify_fallback_sms(
+    body: SmsFallbackRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """After silent_auth, switch to SMS OTP only (does not send SMS during initial `/verify/start`)."""
+    _require_enabled()
+    return await verification_service.fallback_to_sms_verification(
+        db=db,
+        user_id=str(current_user.id),
+        request_id=body.request_id,
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
     )
 
 
