@@ -13,7 +13,35 @@ from .settings import get_verification_settings
 
 logger = structlog.get_logger()
 
-VONAGE_API_BASE = "https://api.vonage.com/v2/verify"
+# Official Vonage Python SDK uses api.nexmo.com + POST /v2/verify (see vonage_verify.Verify).
+VONAGE_API_BASE = "https://api.nexmo.com/v2/verify"
+
+
+def _e164_to_vonage_phone(e164: str) -> str:
+    """
+    Verify v2 expects E.164 digits without '+' or '00' (vonage_utils PhoneNumber pattern).
+    Sending '+447...' can yield 403 HTML from the edge.
+    """
+    s = e164.strip()
+    if s.startswith("+"):
+        s = s[1:]
+    elif s.startswith("00"):
+        s = s[2:]
+    if not re.fullmatch(r"[1-9]\d{6,14}", s):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "Phone number must be valid E.164 for Vonage.", "code": "INVALID_PHONE_VONAGE"},
+        )
+    return s
+
+
+def _vonage_http_headers(token: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "ilaunching-auth-api (httpx; Vonage Verify v2)",
+    }
 
 
 @dataclass
@@ -23,10 +51,7 @@ class VerifyStartResult:
 
 
 def _get_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        headers={"Content-Type": "application/json"},
-        timeout=httpx.Timeout(10.0, connect=5.0),
-    )
+    return httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0))
 
 
 def _parse_vonage_json(response: httpx.Response) -> dict:
@@ -179,18 +204,22 @@ def _build_jwt() -> str:
         )
 
     now = int(time.time())
-    # Vonage Application JWT: include nbf + acl per Network API docs (missing claims often yield HTML 403).
+    # Match vonage_jwt.JwtClient.generate_application_jwt defaults (no nbf/acl — extra claims can break Verify).
+    ttl_sec = 15 * 60
     payload = {
         "application_id": s.vonage_application_id,
         "iat": now,
-        "nbf": now - 60,
-        "exp": now + 900,
         "jti": str(uuid.uuid4()),
-        "acl": {"paths": {}},
+        "exp": now + ttl_sec,
     }
     try:
         signing_key = _load_rsa_private_key(s.vonage_private_key)
-        return jwt.encode(payload, signing_key, algorithm="RS256", headers={"typ": "JWT"})
+        return jwt.encode(
+            payload,
+            signing_key,
+            algorithm="RS256",
+            headers={"alg": "RS256", "typ": "JWT"},
+        )
     except Exception as exc:
         # Log type + PEM banner only — never log str(exc); library messages could change over time.
         logger.error(
@@ -207,24 +236,26 @@ def _build_jwt() -> str:
 async def start_verification(phone_number: str) -> VerifyStartResult:
     s = get_verification_settings()
 
+    to_digits = _e164_to_vonage_phone(phone_number)
+
     token = _build_jwt()
 
     payload = {
-        "brand": s.vonage_brand_name,
+        "brand": s.vonage_brand_name[:16],
         "workflow": [
-            {"channel": "silent_auth", "to": phone_number},
-            {"channel": "sms", "to": phone_number},
+            {"channel": "silent_auth", "to": to_digits},
+            {"channel": "sms", "to": to_digits},
         ],
     }
 
-    logger.info("Starting verification", phone_number=phone_number)
+    logger.info("Starting verification", phone_e164=phone_number, vonage_to=to_digits)
 
     async with _get_client() as client:
         try:
             response = await client.post(
                 VONAGE_API_BASE,
                 json=payload,
-                headers={"Authorization": f"Bearer {token}"},
+                headers=_vonage_http_headers(token),
             )
             _raise_for_status(response)
             data = _parse_vonage_json(response)
@@ -255,7 +286,7 @@ async def check_verification_code(request_id: str, code: str) -> None:
             response = await client.post(
                 f"{VONAGE_API_BASE}/{request_id}",
                 json={"code": code},
-                headers={"Authorization": f"Bearer {token}"},
+                headers=_vonage_http_headers(token),
             )
             _raise_for_status(response)
             logger.info("OTP check success", request_id=request_id)
