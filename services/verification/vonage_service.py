@@ -2,6 +2,7 @@ import base64
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 import jwt
@@ -64,13 +65,36 @@ def _parse_vonage_json(response: httpx.Response) -> dict:
         return {}
 
 
+def _vonage_problem_invalid_params(body: Any) -> list[Any] | None:
+    """RFC 7807 problem+json may list invalid fields under several keys."""
+    if not isinstance(body, dict):
+        return None
+    inv = (
+        body.get("invalid_parameters")
+        or body.get("invalidParameters")
+        or body.get("invalid-params")
+    )
+    return inv if isinstance(inv, list) else None
+
+
+def _vonage_problem_summary(body: Any) -> str:
+    if not isinstance(body, dict):
+        return ""
+    for key in ("detail", "title"):
+        val = body.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
 def _raise_for_status(response: httpx.Response) -> None:
     if response.is_success:
         return
 
     code = response.status_code
     body = _parse_vonage_json(response)
-    detail = body.get("detail", "") if isinstance(body, dict) else ""
+    detail = _vonage_problem_summary(body)
+    invalid_params = _vonage_problem_invalid_params(body)
 
     ct = response.headers.get("content-type", "")
     snippet = ""
@@ -80,7 +104,8 @@ def _raise_for_status(response: httpx.Response) -> None:
     logger.warning(
         "Vonage API error",
         status_code=code,
-        detail=detail,
+        detail=detail or None,
+        invalid_parameters=invalid_params,
         content_type=ct or None,
         body_prefix=snippet or None,
     )
@@ -108,7 +133,15 @@ def _raise_for_status(response: httpx.Response) -> None:
     if code == 429:
         raise HTTPException(429, {"error": "Verification service rate limited.", "code": "VONAGE_RATE_LIMIT"})
     if code == 422:
-        raise HTTPException(422, {"error": "This number cannot be verified.", "code": "VONAGE_UNVERIFIABLE"})
+        msg = detail or "The verification provider rejected this request (invalid parameters)."
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": msg,
+                "code": "VONAGE_INVALID_PARAMS",
+                "vonage_invalid_parameters": invalid_params,
+            },
+        )
     if code == 404:
         raise HTTPException(404, {"error": "Verification request not found.", "code": "REQUEST_NOT_FOUND"})
     if code == 410:
@@ -246,11 +279,9 @@ async def start_verification(phone_number: str) -> VerifyStartResult:
     to_digits = _e164_to_vonage_phone(phone_number)
     token = _build_jwt()
 
-    # coverage_check=false: async behaviour; always returns check_url when possible instead of
-    # synchronously failing over when silent_auth coverage is unclear (Verify API v2).
+    # Omit coverage_check unless Vonage documents it for your account — unknown fields cause 422 (problem+json).
     payload = {
         **_verify_v2_payload_base(),
-        "coverage_check": False,
         "workflow": [
             {"channel": "silent_auth", "to": to_digits},
         ],
