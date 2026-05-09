@@ -85,6 +85,32 @@ def _build_jwt() -> str:
             detail={"error": "Verification not configured (JWT).", "code": "VERIFICATION_NOT_CONFIGURED"},
         )
 
+    pem_u = s.vonage_private_key.upper()
+    if "BEGIN PUBLIC KEY" in pem_u:
+        logger.error(
+            "VONAGE_PRIVATE_KEY is a public key; JWT signing requires the application private key",
+            pem_header=_pem_header_hint(s.vonage_private_key),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "VONAGE_PRIVATE_KEY must be the private key (BEGIN PRIVATE KEY), not the public key.",
+                "code": "VONAGE_PUBLIC_KEY_NOT_ALLOWED",
+            },
+        )
+    if "BEGIN CERTIFICATE" in pem_u:
+        logger.error(
+            "VONAGE_PRIVATE_KEY looks like a certificate; use the Vonage application private key PEM",
+            pem_header=_pem_header_hint(s.vonage_private_key),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "VONAGE_PRIVATE_KEY must be the application private key PEM, not a certificate.",
+                "code": "VONAGE_WRONG_PEM_KIND",
+            },
+        )
+
     now = int(time.time())
     payload = {
         "application_id": s.vonage_application_id,
