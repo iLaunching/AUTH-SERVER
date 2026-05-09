@@ -73,7 +73,7 @@ def _rsa_private_key_from_pem(pem: str):
 def _build_jwt() -> str:
     """
     Vonage Application JWT (RS256).
-    Uses `VONAGE_APPLICATION_ID` + private key PEM (`VONAGE_PRIVATE_KEY` or file via `VONAGE_PRIVATE_KEY_FILE`).
+    Uses `VONAGE_APPLICATION_ID` + `VONAGE_PRIVATE_KEY` (PEM).
     """
     import time
     import uuid

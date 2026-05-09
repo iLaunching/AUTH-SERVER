@@ -3,10 +3,6 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-import structlog
-
-logger = structlog.get_logger()
-
 
 @dataclass(frozen=True)
 class VerificationSettings:
@@ -90,27 +86,6 @@ def _chunk_base64_lines(body: str, width: int = 64) -> str:
     return "\n".join(body[i : i + width] for i in range(0, len(body), width))
 
 
-def _vonage_private_key_raw() -> str:
-    """
-    Prefer loading PEM from a file path (Docker/K8s/Railway secret mounts, local dev),
-    then fall back to VONAGE_PRIVATE_KEY. Never commit the file to git.
-    """
-    path = (os.getenv("VONAGE_PRIVATE_KEY_FILE") or "").strip()
-    if path:
-        try:
-            with open(path, encoding="utf-8") as f:
-                raw = f.read()
-            if raw.strip():
-                return raw
-        except OSError as e:
-            logger.warning(
-                "Could not read VONAGE_PRIVATE_KEY_FILE",
-                path=path,
-                errno=getattr(e, "errno", None),
-            )
-    return os.getenv("VONAGE_PRIVATE_KEY") or ""
-
-
 @lru_cache
 def get_verification_settings() -> VerificationSettings:
     """
@@ -123,7 +98,7 @@ def get_verification_settings() -> VerificationSettings:
         enabled=enabled,
 
         vonage_application_id=(os.getenv("VONAGE_APPLICATION_ID") or "").strip(),
-        vonage_private_key=_normalize_vonage_private_key(_vonage_private_key_raw()),
+        vonage_private_key=_normalize_vonage_private_key(os.getenv("VONAGE_PRIVATE_KEY") or ""),
         vonage_brand_name=os.getenv("VONAGE_BRAND_NAME", "iLaunching"),
         vonage_webhook_secret=os.getenv("VONAGE_WEBHOOK_SECRET", ""),
 
