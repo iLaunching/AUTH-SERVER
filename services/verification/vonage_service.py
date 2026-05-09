@@ -1,4 +1,5 @@
 import base64
+import json
 import re
 from dataclasses import dataclass
 
@@ -28,13 +29,30 @@ def _get_client() -> httpx.AsyncClient:
     )
 
 
+def _parse_vonage_json(response: httpx.Response) -> dict:
+    """Vonage may return HTML or empty body on proxy/gateway errors — avoid JSONDecodeError."""
+    if not response.content or not response.content.strip():
+        return {}
+    try:
+        return response.json()
+    except json.JSONDecodeError:
+        prefix = (response.text or "")[:300].replace("\n", " ")
+        logger.warning(
+            "Vonage non-JSON response body",
+            status_code=response.status_code,
+            content_type=response.headers.get("content-type", ""),
+            body_prefix=prefix,
+        )
+        return {}
+
+
 def _raise_for_status(response: httpx.Response) -> None:
     if response.is_success:
         return
 
     code = response.status_code
-    body = response.json() if response.content else {}
-    detail = body.get("detail", "")
+    body = _parse_vonage_json(response)
+    detail = body.get("detail", "") if isinstance(body, dict) else ""
 
     logger.warning("Vonage API error", status_code=code, detail=detail)
 
@@ -184,10 +202,16 @@ async def start_verification(phone_number: str) -> VerifyStartResult:
                 headers={"Authorization": f"Bearer {token}"},
             )
             _raise_for_status(response)
-            data = response.json()
+            data = _parse_vonage_json(response)
+            request_id = data.get("request_id") if isinstance(data, dict) else None
+            if not request_id:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail={"error": "Invalid response from verification provider.", "code": "VONAGE_BAD_RESPONSE"},
+                )
             return VerifyStartResult(
-                request_id=data["request_id"],
-                check_url=data.get("check_url"),
+                request_id=request_id,
+                check_url=data.get("check_url") if isinstance(data, dict) else None,
             )
         except HTTPException:
             raise
