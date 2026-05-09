@@ -56,6 +56,32 @@ def _raise_for_status(response: httpx.Response) -> None:
 
     logger.warning("Vonage API error", status_code=code, detail=detail)
 
+    # HTML 403/401 from Vonage edge = JWT rejected or wrong app/key pairing (not JSON API body).
+    if code == 401:
+        logger.warning(
+            "Vonage returned 401 — JWT or Application API credentials rejected",
+            hint="Private key must belong to the same Vonage Application as VONAGE_APPLICATION_ID",
+        )
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "Verification provider rejected authentication (401). Check Vonage application id and private key pair.",
+                "code": "VONAGE_AUTH_REJECTED",
+            },
+        )
+    if code == 403:
+        logger.warning(
+            "Vonage returned 403 Forbidden (often HTML) — application JWT not accepted at edge",
+            hint="Regenerate keypair in Vonage Dashboard for this Application; match VONAGE_APPLICATION_ID; check server clock (JWT uses short expiry)",
+        )
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "Verification provider denied access (403). Confirm JWT keypair matches this Vonage Application and Verify is enabled.",
+                "code": "VONAGE_FORBIDDEN",
+            },
+        )
+
     if code == 402:
         raise HTTPException(502, {"error": "Verification quota exceeded.", "code": "VONAGE_QUOTA"})
     if code == 429:
