@@ -53,6 +53,9 @@ def _normalize_vonage_private_key(raw: str) -> str:
     """
     Normalize Vonage application private key PEM from env.
 
+    Does not accept weaker credentials: you still must supply the real private key
+    bytes; this only fixes formatting so the same secret parses correctly.
+
     Handles: UTF-8 BOM, outer quotes, literal \\n / \\r\\n from one-line env vars,
     Windows newlines, and PKCS#8 body-only pastes (base64 without PEM headers).
     """

@@ -122,10 +122,10 @@ def _build_jwt() -> str:
         signing_key = _rsa_private_key_from_pem(s.vonage_private_key)
         return jwt.encode(payload, signing_key, algorithm="RS256")
     except Exception as exc:
+        # Log type + PEM banner only — never log str(exc); library messages could change over time.
         logger.error(
             "Vonage JWT signing failed",
             exc_type=type(exc).__name__,
-            exc_message=str(exc),
             pem_header=_pem_header_hint(s.vonage_private_key),
         )
         raise HTTPException(
