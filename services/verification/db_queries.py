@@ -98,7 +98,7 @@ async def create_attempt(
                 (user_id, phone_number, vonage_request_id, channel, status, ip_address, user_agent)
             VALUES
                 (:user_id, :phone_number, :vonage_request_id, :channel,
-                 'pending', :ip_address::inet, :user_agent)
+                 'pending', CAST(:ip_address AS inet), :user_agent)
             """
         ),
         {

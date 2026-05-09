@@ -100,8 +100,25 @@ async def vonage_webhook(
     _require_enabled()
     raw_body = await request.body()
 
-    signature_header = request.headers.get("x-vonage-signature", "")
-    if not _is_valid_signature(raw_body, signature_header):
+    secret = (get_verification_settings().vonage_webhook_secret or "").strip()
+    if not secret:
+        logger.error("VONAGE_WEBHOOK_SECRET is not set — cannot validate Vonage webhooks")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "Webhook verification not configured.", "code": "WEBHOOK_SECRET_MISSING"},
+        )
+
+    sig_header = (
+        request.headers.get("x-vonage-signature")
+        or request.headers.get("X-Vonage-Signature-SHA256")
+        or ""
+    )
+
+    if not _is_valid_webhook_signature(raw_body, sig_header, secret):
+        logger.warning(
+            "Vonage webhook signature check failed",
+            has_signature_header=bool(sig_header.strip()),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid signature", "code": "INVALID_SIGNATURE"},
@@ -135,13 +152,19 @@ async def _process_webhook(payload: dict) -> None:
         logger.error("Webhook processing failed", error=str(exc), request_id=payload.get("request_id"))
 
 
-def _is_valid_signature(raw_body: bytes, signature_header: str) -> bool:
-    if not signature_header:
+def _is_valid_webhook_signature(raw_body: bytes, signature_header: str, secret: str) -> bool:
+    """
+    Verify `x-vonage-signature`: hex(SHA256-HMAC(signing_secret, raw_request_body)).
+    Secret must match the Verify application's webhook signing secret in the Vonage dashboard.
+    """
+    if not signature_header.strip():
         return False
-    secret = get_verification_settings().vonage_webhook_secret.encode("utf-8")
-    expected = hmac.new(secret, raw_body, hashlib.sha256).hexdigest()
+    sig = signature_header.strip()
+    if sig.lower().startswith("sha256="):
+        sig = sig.split("=", 1)[1].strip()
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     try:
-        return hmac.compare_digest(signature_header, expected)
+        return hmac.compare_digest(sig.lower(), expected.lower())
     except (TypeError, ValueError):
         return False
 
