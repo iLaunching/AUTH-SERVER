@@ -125,12 +125,17 @@ async def update_attempt_status(
             SET status         = :status,
                 failure_reason = :failure_reason,
                 completed_at   = CASE
-                    WHEN :status IN ('completed','failed','expired')
+                    WHEN :status_for_terminal IN ('completed','failed','expired')
                     THEN NOW() ELSE NULL
                 END
             WHERE vonage_request_id = :request_id
             """
         ),
-        {"status": new_status, "failure_reason": failure_reason, "request_id": vonage_request_id},
+        {
+            "status": new_status,
+            "status_for_terminal": new_status,
+            "failure_reason": failure_reason,
+            "request_id": vonage_request_id,
+        },
     )
 

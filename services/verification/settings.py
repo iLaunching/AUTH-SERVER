@@ -44,6 +44,41 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _normalize_signing_secret(raw: str) -> str:
+    """Dashboard paste cleanup for webhook/JWT verification secrets."""
+    if not raw:
+        return ""
+    s = raw.strip()
+    if s.startswith("\ufeff"):
+        s = s.lstrip("\ufeff").strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in '"\'':
+        s = s[1:-1].strip()
+    return s
+
+
+def get_vonage_webhook_signing_secrets() -> list[str]:
+    """
+    Vonage may sign webhooks with different dashboard secrets depending on product.
+    Try each until JWT/HMAC verifies (order preserved, deduped).
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for name in (
+        "VONAGE_SIGNATURE_SECRET",
+        "VONAGE_WEBHOOK_SECRET",
+        "VONAGE_API_SECRET",
+        "NEXMO_API_SECRET",
+    ):
+        raw = os.getenv(name)
+        if not raw:
+            continue
+        s = _normalize_signing_secret(raw)
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
 def _normalize_vonage_private_key(raw: str) -> str:
     """
     Normalize Vonage application private key from env (PEM or raw base64 DER).
@@ -81,10 +116,13 @@ def get_verification_settings() -> VerificationSettings:
         vonage_application_id=(os.getenv("VONAGE_APPLICATION_ID") or "").strip(),
         vonage_private_key=_normalize_vonage_private_key(os.getenv("VONAGE_PRIVATE_KEY") or ""),
         vonage_brand_name=os.getenv("VONAGE_BRAND_NAME", "iLaunching"),
-        # Official snippets use VONAGE_SIGNATURE_SECRET (Dashboard → API Settings → Signature secret).
-        # Application-specific webhook UI may call it differently — accept either.
+        # Primary webhook secret for backwards compat; full candidate list via get_vonage_webhook_signing_secrets().
         vonage_webhook_secret=(
-            (os.getenv("VONAGE_SIGNATURE_SECRET") or os.getenv("VONAGE_WEBHOOK_SECRET") or "").strip()
+            _normalize_signing_secret(
+                os.getenv("VONAGE_SIGNATURE_SECRET")
+                or os.getenv("VONAGE_WEBHOOK_SECRET")
+                or ""
+            )
         ),
 
         redis_key_prefix=os.getenv("VERIFICATION_REDIS_PREFIX", "verif:"),

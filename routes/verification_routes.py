@@ -18,7 +18,7 @@ from services.verification.schemas import (
     StartVerificationResponse,
     VerificationStatusResponse,
 )
-from services.verification.settings import get_verification_settings
+from services.verification.settings import get_verification_settings, get_vonage_webhook_signing_secrets
 from services.verification import verification_service
 
 logger = structlog.get_logger()
@@ -101,11 +101,11 @@ async def vonage_webhook(
     _require_enabled()
     raw_body = await request.body()
 
-    secret = (get_verification_settings().vonage_webhook_secret or "").strip()
-    if not secret:
+    secrets = get_vonage_webhook_signing_secrets()
+    if not secrets:
         logger.error(
             "Vonage signing secret not set — set VONAGE_SIGNATURE_SECRET "
-            "(API Settings → Signature secret) or VONAGE_WEBHOOK_SECRET",
+            "(API Settings → Signature secret), VONAGE_WEBHOOK_SECRET, or VONAGE_API_SECRET",
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -119,11 +119,13 @@ async def vonage_webhook(
     )
     auth_header = request.headers.get("authorization") or ""
 
-    if not _is_valid_webhook_signature(raw_body, sig_header, secret, auth_header):
+    ok, reject_meta = _is_valid_webhook_signature(raw_body, sig_header, secrets, auth_header)
+    if not ok:
         logger.warning(
-            "Vonage webhook signature check failed",
+            "Vonage webhook rejected",
             has_signature_header=bool(sig_header.strip()),
             has_bearer_jwt=auth_header.strip().lower().startswith("bearer "),
+            **reject_meta,
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -158,69 +160,87 @@ async def _process_webhook(payload: dict) -> None:
         logger.error("Webhook processing failed", error=str(exc), request_id=payload.get("request_id"))
 
 
+_JWT_DECODE_OPTIONS = {
+    "verify_aud": False,
+    "verify_iss": False,
+    "verify_nbf": False,
+    # Vonage issues `iat` slightly ahead of wall clock; PyJWT treats future iat as ImmatureSignatureError.
+    "verify_iat": False,
+}
+
+
+def _payload_hash_matches(raw_body: bytes, claims: dict) -> bool:
+    ph = claims.get("payload_hash")
+    if not ph:
+        return True
+    ph_norm = str(ph).strip().lower()
+    candidates = [hashlib.sha256(raw_body).hexdigest().lower()]
+    try:
+        obj = json.loads(raw_body)
+        candidates.append(
+            hashlib.sha256(
+                json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            ).hexdigest().lower()
+        )
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return ph_norm in candidates
+
+
 def _is_valid_webhook_signature(
     raw_body: bytes,
     signature_header: str,
-    secret: str,
+    secrets: list[str],
     authorization: str,
-) -> bool:
+) -> tuple[bool, dict[str, object]]:
     """
     Verify Vonage callbacks using either:
     - `x-vonage-signature`: hex(SHA256-HMAC(secret, raw_body)), or
-    - `Authorization: Bearer <jwt>` HS256 — same secret as Dashboard → API Settings → Signature secret
-      (`vonage_jwt.verify_signature`). Optionally validate `payload_hash` vs SHA256(raw_body).
+    - `Authorization: Bearer <jwt>` HS256 — try each configured secret (signature, webhook, API).
 
-    Secret is read from VONAGE_SIGNATURE_SECRET or VONAGE_WEBHOOK_SECRET (see settings).
+    Optionally validate `payload_hash` vs SHA256(raw_body) when present in claims.
     """
-    sec_b = secret.encode("utf-8")
-
     if signature_header.strip():
         sig = signature_header.strip()
         if sig.lower().startswith("sha256="):
             sig = sig.split("=", 1)[1].strip()
-        expected = hmac.new(sec_b, raw_body, hashlib.sha256).hexdigest()
-        try:
-            if hmac.compare_digest(sig.lower(), expected.lower()):
-                return True
-        except (TypeError, ValueError):
-            pass
+        for secret in secrets:
+            sec_b = secret.encode("utf-8")
+            expected = hmac.new(sec_b, raw_body, hashlib.sha256).hexdigest()
+            try:
+                if hmac.compare_digest(sig.lower(), expected.lower()):
+                    return True, {}
+            except (TypeError, ValueError):
+                continue
 
     if authorization.strip().lower().startswith("bearer "):
         token = authorization.split(None, 1)[1].strip()
-        try:
-            claims = jwt.decode(
-                token,
-                secret,
-                algorithms=["HS256"],
-                leeway=120,
-                options={"verify_aud": False},
-            )
-            ph = claims.get("payload_hash")
-            if ph:
-                ph_norm = str(ph).strip().lower()
-                candidates = [hashlib.sha256(raw_body).hexdigest().lower()]
-                try:
-                    obj = json.loads(raw_body)
-                    candidates.append(
-                        hashlib.sha256(
-                            json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-                        ).hexdigest().lower()
-                    )
-                except (json.JSONDecodeError, TypeError):
-                    pass
-                if ph_norm not in candidates:
-                    return False
-            return True
-        except jwt.InvalidTokenError:
+        last_err: str | None = None
+        for secret in secrets:
             try:
-                hdr = jwt.get_unverified_header(token)
-                logger.warning(
-                    "Vonage Bearer JWT rejected",
-                    jwt_alg=hdr.get("alg"),
-                    jwt_typ=hdr.get("typ"),
+                claims = jwt.decode(
+                    token,
+                    secret,
+                    algorithms=["HS256"],
+                    leeway=600,
+                    options=_JWT_DECODE_OPTIONS,
                 )
-            except Exception:
-                pass
+                if not _payload_hash_matches(raw_body, claims):
+                    last_err = "payload_hash_mismatch"
+                    continue
+                return True, {}
+            except jwt.InvalidTokenError as exc:
+                last_err = type(exc).__name__
+                continue
 
-    return False
+        meta: dict[str, object] = {"last_error": last_err or "unknown", "secrets_tried": len(secrets)}
+        try:
+            hdr = jwt.get_unverified_header(token)
+            meta["jwt_alg"] = hdr.get("alg")
+            meta["jwt_typ"] = hdr.get("typ")
+        except Exception:
+            pass
+        return False, meta
+
+    return False, {}
 
