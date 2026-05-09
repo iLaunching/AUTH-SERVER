@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 
+import jwt
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -113,11 +114,13 @@ async def vonage_webhook(
         or request.headers.get("X-Vonage-Signature-SHA256")
         or ""
     )
+    auth_header = request.headers.get("authorization") or ""
 
-    if not _is_valid_webhook_signature(raw_body, sig_header, secret):
+    if not _is_valid_webhook_signature(raw_body, sig_header, secret, auth_header):
         logger.warning(
             "Vonage webhook signature check failed",
             has_signature_header=bool(sig_header.strip()),
+            has_bearer_jwt=auth_header.strip().lower().startswith("bearer "),
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -152,19 +155,50 @@ async def _process_webhook(payload: dict) -> None:
         logger.error("Webhook processing failed", error=str(exc), request_id=payload.get("request_id"))
 
 
-def _is_valid_webhook_signature(raw_body: bytes, signature_header: str, secret: str) -> bool:
+def _is_valid_webhook_signature(
+    raw_body: bytes,
+    signature_header: str,
+    secret: str,
+    authorization: str,
+) -> bool:
     """
-    Verify `x-vonage-signature`: hex(SHA256-HMAC(signing_secret, raw_request_body)).
-    Secret must match the Verify application's webhook signing secret in the Vonage dashboard.
+    Verify Vonage callbacks using either:
+    - `x-vonage-signature`: hex(SHA256-HMAC(secret, raw_body)), or
+    - `Authorization: Bearer <jwt>` with HS256 signed using the same webhook signing secret
+      (Verify V2 commonly uses JWT; `vonage_jwt.verify_signature` pattern).
+    Secret = Vonage dashboard webhook / signing secret for this application.
     """
-    if not signature_header.strip():
-        return False
-    sig = signature_header.strip()
-    if sig.lower().startswith("sha256="):
-        sig = sig.split("=", 1)[1].strip()
-    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
-    try:
-        return hmac.compare_digest(sig.lower(), expected.lower())
-    except (TypeError, ValueError):
-        return False
+    sec_b = secret.encode("utf-8")
+
+    if signature_header.strip():
+        sig = signature_header.strip()
+        if sig.lower().startswith("sha256="):
+            sig = sig.split("=", 1)[1].strip()
+        expected = hmac.new(sec_b, raw_body, hashlib.sha256).hexdigest()
+        try:
+            if hmac.compare_digest(sig.lower(), expected.lower()):
+                return True
+        except (TypeError, ValueError):
+            pass
+
+    if authorization.strip().lower().startswith("bearer "):
+        token = authorization.split(None, 1)[1].strip()
+        try:
+            claims = jwt.decode(token, secret, algorithms=["HS256"])
+            try:
+                body = json.loads(raw_body)
+                rid = body.get("request_id")
+                jwt_rid = claims.get("request_id")
+                pl = claims.get("payload")
+                if jwt_rid is None and isinstance(pl, dict):
+                    jwt_rid = pl.get("request_id")
+                if rid and jwt_rid is not None and str(jwt_rid) != str(rid):
+                    return False
+            except (json.JSONDecodeError, TypeError):
+                pass
+            return True
+        except jwt.InvalidTokenError:
+            pass
+
+    return False
 
