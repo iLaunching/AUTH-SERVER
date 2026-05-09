@@ -81,7 +81,11 @@ def get_verification_settings() -> VerificationSettings:
         vonage_application_id=(os.getenv("VONAGE_APPLICATION_ID") or "").strip(),
         vonage_private_key=_normalize_vonage_private_key(os.getenv("VONAGE_PRIVATE_KEY") or ""),
         vonage_brand_name=os.getenv("VONAGE_BRAND_NAME", "iLaunching"),
-        vonage_webhook_secret=os.getenv("VONAGE_WEBHOOK_SECRET", ""),
+        # Official snippets use VONAGE_SIGNATURE_SECRET (Dashboard → API Settings → Signature secret).
+        # Application-specific webhook UI may call it differently — accept either.
+        vonage_webhook_secret=(
+            (os.getenv("VONAGE_SIGNATURE_SECRET") or os.getenv("VONAGE_WEBHOOK_SECRET") or "").strip()
+        ),
 
         redis_key_prefix=os.getenv("VERIFICATION_REDIS_PREFIX", "verif:"),
 

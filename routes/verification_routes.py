@@ -103,7 +103,10 @@ async def vonage_webhook(
 
     secret = (get_verification_settings().vonage_webhook_secret or "").strip()
     if not secret:
-        logger.error("VONAGE_WEBHOOK_SECRET is not set — cannot validate Vonage webhooks")
+        logger.error(
+            "Vonage signing secret not set — set VONAGE_SIGNATURE_SECRET "
+            "(API Settings → Signature secret) or VONAGE_WEBHOOK_SECRET",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "Webhook verification not configured.", "code": "WEBHOOK_SECRET_MISSING"},
@@ -164,9 +167,10 @@ def _is_valid_webhook_signature(
     """
     Verify Vonage callbacks using either:
     - `x-vonage-signature`: hex(SHA256-HMAC(secret, raw_body)), or
-    - `Authorization: Bearer <jwt>` with HS256 signed using the same webhook signing secret
-      (Verify V2 commonly uses JWT; `vonage_jwt.verify_signature` pattern).
-    Secret = Vonage dashboard webhook / signing secret for this application.
+    - `Authorization: Bearer <jwt>` HS256 — same secret as Dashboard → API Settings → Signature secret
+      (`vonage_jwt.verify_signature`). Optionally validate `payload_hash` vs SHA256(raw_body).
+
+    Secret is read from VONAGE_SIGNATURE_SECRET or VONAGE_WEBHOOK_SECRET (see settings).
     """
     sec_b = secret.encode("utf-8")
 
@@ -184,21 +188,39 @@ def _is_valid_webhook_signature(
     if authorization.strip().lower().startswith("bearer "):
         token = authorization.split(None, 1)[1].strip()
         try:
-            claims = jwt.decode(token, secret, algorithms=["HS256"])
-            try:
-                body = json.loads(raw_body)
-                rid = body.get("request_id")
-                jwt_rid = claims.get("request_id")
-                pl = claims.get("payload")
-                if jwt_rid is None and isinstance(pl, dict):
-                    jwt_rid = pl.get("request_id")
-                if rid and jwt_rid is not None and str(jwt_rid) != str(rid):
+            claims = jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                leeway=120,
+                options={"verify_aud": False},
+            )
+            ph = claims.get("payload_hash")
+            if ph:
+                ph_norm = str(ph).strip().lower()
+                candidates = [hashlib.sha256(raw_body).hexdigest().lower()]
+                try:
+                    obj = json.loads(raw_body)
+                    candidates.append(
+                        hashlib.sha256(
+                            json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+                        ).hexdigest().lower()
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                if ph_norm not in candidates:
                     return False
-            except (json.JSONDecodeError, TypeError):
-                pass
             return True
         except jwt.InvalidTokenError:
-            pass
+            try:
+                hdr = jwt.get_unverified_header(token)
+                logger.warning(
+                    "Vonage Bearer JWT rejected",
+                    jwt_alg=hdr.get("alg"),
+                    jwt_typ=hdr.get("typ"),
+                )
+            except Exception:
+                pass
 
     return False
 
