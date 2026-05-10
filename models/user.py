@@ -123,6 +123,8 @@ class UserProfile(Base):
         nullable=True,
         unique=True,
     )
+    # Matches shared DB column name (legacy spelling)
+    phone_varified = Column(Boolean, default=False, nullable=False)
     bio = Column(Text)
     timezone = Column(String(50), default="UTC")
     language = Column(String(10), default="en")
@@ -182,6 +184,7 @@ class UserProfile(Base):
             "phone_identity_id": (
                 str(self.phone_identity_id) if self.phone_identity_id else None
             ),
+            "phone_varified": self.phone_varified,
             "avatar_url": self.avatar_url,
             "avatar_icon": self.avatar_icon,
             "avatar_image": self.avatar_image,

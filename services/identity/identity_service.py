@@ -232,7 +232,10 @@ async def revoke_identity(user_id: str) -> None:
         await session.execute(
             text(
                 """
-                UPDATE user_profiles SET phone_identity_id = NULL, updated_at = NOW()
+                UPDATE user_profiles
+                SET phone_identity_id = NULL,
+                    phone_varified = FALSE,
+                    updated_at = NOW()
                 WHERE user_id = CAST(:uid AS uuid)
                 """
             ),
@@ -391,6 +394,7 @@ async def _persist_binding(
                 SET
                     phone = :phone,
                     phone_identity_id = CAST(:pid AS uuid),
+                    phone_varified = TRUE,
                     updated_at = NOW()
                 WHERE user_id = CAST(:uid AS uuid)
                 """
