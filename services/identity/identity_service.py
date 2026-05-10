@@ -344,7 +344,7 @@ async def _log_attempt(
                              completed_at)
                         VALUES
                             (CAST(:uid AS uuid), :phone, :channel, :status, CAST(:ip AS inet), :ua,
-                             CASE WHEN :status != 'pending' THEN NOW() ELSE NULL END)
+                             CASE WHEN :status != 'pending'::varchar THEN NOW() ELSE NULL END)
                         """
                     ),
                     {
@@ -365,7 +365,7 @@ async def _log_attempt(
                              completed_at)
                         VALUES
                             (CAST(:uid AS uuid), :phone, :channel, :status, NULL, :ua,
-                             CASE WHEN :status != 'pending' THEN NOW() ELSE NULL END)
+                             CASE WHEN :status != 'pending'::varchar THEN NOW() ELSE NULL END)
                         """
                     ),
                     {
