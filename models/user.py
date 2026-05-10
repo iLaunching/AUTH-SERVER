@@ -115,6 +115,7 @@ class UserProfile(Base):
     # Basic profile fields
     first_name = Column(Text)
     last_name = Column(Text)
+    country_code = Column(String(5), nullable=True)
     # Ear / routing — synapse_number moved to api-server smart_hubs table (keep auth-api resilient)
     phone = Column(String(20))
     phone_identity_id = Column(
@@ -180,6 +181,7 @@ class UserProfile(Base):
             "user_id": str(self.user_id),
             "first_name": self.first_name,
             "last_name": self.last_name,
+            "country_code": self.country_code,
             "phone": self.phone,
             "phone_identity_id": (
                 str(self.phone_identity_id) if self.phone_identity_id else None

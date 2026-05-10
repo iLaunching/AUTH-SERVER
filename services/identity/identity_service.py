@@ -16,7 +16,7 @@ from config.database import async_session_maker
 
 from .challenge_service import consume_challenge
 from .otp_service import send_otp, verify_otp
-from .phone_validator import validate_and_normalise
+from .phone_validator import region_code_for_e164, validate_and_normalise
 from .rate_limiter import check_limits
 from .redis_helpers import delete, get_json, keys as redis_keys, set_json
 from .schemas import (
@@ -44,7 +44,7 @@ async def start_binding(
 ) -> BindPhoneResponse:
     await check_limits(ip, raw_phone, user_id)
 
-    e164, _ = validate_and_normalise(raw_phone, region)
+    e164, iso_region = validate_and_normalise(raw_phone, region)
 
     existing = await _get_identity_from_db(user_id)
     if existing:
@@ -76,6 +76,7 @@ async def start_binding(
             hardware_id=attest_key_hash,
             ip=ip,
             user_agent=user_agent,
+            country_code=iso_region,
         )
         logger.info("[Identity] Bound via App Attest — no SMS sent", user_id=user_id)
         return BindPhoneResponse(
@@ -323,6 +324,7 @@ async def _persist_binding(
     ip: str | None = None,
     user_agent: str | None = None,
     hardware_id: str | None = None,
+    country_code: str | None = None,
 ) -> datetime | None:
     phone_hash = hashlib.sha256(real_phone.encode()).hexdigest()
     bound_at: datetime | None = None
@@ -387,6 +389,8 @@ async def _persist_binding(
                 },
             )
 
+        iso_cc = country_code or region_code_for_e164(real_phone)
+
         await session.execute(
             text(
                 """
@@ -395,6 +399,7 @@ async def _persist_binding(
                     phone = pi.real_phone,
                     phone_identity_id = pi.id,
                     phone_varified = TRUE,
+                    country_code = COALESCE(CAST(:cc AS VARCHAR(5)), up.country_code),
                     updated_at = NOW()
                 FROM phone_identities pi
                 WHERE up.user_id = CAST(:uid AS uuid)
@@ -402,7 +407,7 @@ async def _persist_binding(
                   AND pi.user_id = up.user_id
                 """
             ),
-            {"pid": str(identity_id), "uid": user_id},
+            {"pid": str(identity_id), "uid": user_id, "cc": iso_cc},
         )
         await session.commit()
 
