@@ -25,9 +25,15 @@ class _OTPRecord:
     attempts: int
     created_at: float
     request_id: str
+    country_code: str | None = None
 
 
-async def send_otp(phone: str, request_id: str | None = None) -> str:
+async def send_otp(
+    phone: str,
+    request_id: str | None = None,
+    *,
+    country_code: str | None = None,
+) -> str:
     s = get_identity_settings()
     code = _generate_code(s.otp_length)
     request_id = request_id or secrets.token_urlsafe(24)
@@ -38,6 +44,7 @@ async def send_otp(phone: str, request_id: str | None = None) -> str:
         attempts=0,
         created_at=time.time(),
         request_id=request_id,
+        country_code=country_code,
     )
 
     from config.database import get_redis
@@ -74,7 +81,7 @@ async def send_otp(phone: str, request_id: str | None = None) -> str:
     return request_id
 
 
-async def verify_otp(request_id: str, submitted_code: str) -> str:
+async def verify_otp(request_id: str, submitted_code: str) -> tuple[str, str | None]:
     s = get_identity_settings()
     from config.database import get_redis
 
@@ -93,7 +100,15 @@ async def verify_otp(request_id: str, submitted_code: str) -> str:
             detail={"error": "Code has expired or does not exist.", "code": "OTP_EXPIRED"},
         )
 
-    record = _OTPRecord(**json.loads(raw))
+    raw_dict = json.loads(raw)
+    record = _OTPRecord(
+        phone=raw_dict["phone"],
+        code_hash=raw_dict["code_hash"],
+        attempts=int(raw_dict.get("attempts", 0)),
+        created_at=float(raw_dict["created_at"]),
+        request_id=raw_dict["request_id"],
+        country_code=raw_dict.get("country_code"),
+    )
 
     if record.attempts >= s.otp_max_attempts:
         await delete(redis_keys().otp(request_id))
@@ -125,7 +140,7 @@ async def verify_otp(request_id: str, submitted_code: str) -> str:
 
     await delete(redis_keys().otp(request_id))
     logger.info("[OTP] Verified", request_id=request_id)
-    return record.phone
+    return record.phone, record.country_code
 
 
 def _generate_code(length: int) -> str:

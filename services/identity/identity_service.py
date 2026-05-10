@@ -97,9 +97,10 @@ async def start_binding(
         ip=ip,
         ua=user_agent,
         failure_reason=None,
+        country_code=iso_region,
     )
     try:
-        request_id = await send_otp(e164, request_id=request_id)
+        request_id = await send_otp(e164, request_id=request_id, country_code=iso_region)
     except HTTPException as exc:
         if exc.status_code == status.HTTP_502_BAD_GATEWAY:
             provider_err = None
@@ -114,6 +115,7 @@ async def start_binding(
                 ip=ip,
                 ua=user_agent,
                 failure_reason=str(provider_err or "SMS_FAILED"),
+                country_code=iso_region,
             )
         raise
 
@@ -132,7 +134,8 @@ async def confirm_binding(
 ) -> ConfirmOTPResponse:
     await check_limits(ip, None, user_id)
 
-    real_phone = await verify_otp(request_id, code)
+    real_phone, otp_country_code = await verify_otp(request_id, code)
+    iso_cc = otp_country_code or region_code_for_e164(real_phone)
 
     await _assert_phone_is_free(real_phone, user_id)
 
@@ -142,6 +145,7 @@ async def confirm_binding(
         method=VerificationMethod.SMS,
         trust_level=TrustLevel.MED,
         ip=ip,
+        country_code=iso_cc,
     )
 
     # Strict tracking: mark the same attempt as completed before returning.
@@ -154,6 +158,7 @@ async def confirm_binding(
         ip=ip,
         ua=None,
         failure_reason=None,
+        country_code=iso_cc,
     )
 
     return ConfirmOTPResponse(
@@ -185,7 +190,7 @@ async def resend_otp(
     region: str = "GB",
 ) -> str:
     await check_limits(ip, raw_phone, user_id)
-    e164, _ = validate_and_normalise(raw_phone, region)
+    e164, iso_region = validate_and_normalise(raw_phone, region)
     request_id = secrets.token_urlsafe(24)
     await _upsert_attempt(
         user_id=user_id,
@@ -196,9 +201,10 @@ async def resend_otp(
         ip=ip,
         ua=None,
         failure_reason=None,
+        country_code=iso_region,
     )
     try:
-        return await send_otp(e164, request_id=request_id)
+        return await send_otp(e164, request_id=request_id, country_code=iso_region)
     except HTTPException as exc:
         if exc.status_code == status.HTTP_502_BAD_GATEWAY:
             provider_err = None
@@ -213,6 +219,7 @@ async def resend_otp(
                 ip=ip,
                 ua=None,
                 failure_reason=str(provider_err or "SMS_FAILED"),
+                country_code=iso_region,
             )
         raise
 
@@ -327,6 +334,7 @@ async def _persist_binding(
     country_code: str | None = None,
 ) -> datetime | None:
     phone_hash = hashlib.sha256(real_phone.encode()).hexdigest()
+    iso_cc = country_code or region_code_for_e164(real_phone)
     bound_at: datetime | None = None
 
     if not async_session_maker:
@@ -341,10 +349,10 @@ async def _persist_binding(
                 """
                 INSERT INTO phone_identities
                     (user_id, real_phone, real_phone_hash, trust_level,
-                     verification_method, hardware_id)
+                     verification_method, hardware_id, country_code)
                 VALUES
                     (CAST(:user_id AS uuid), :real_phone, :phone_hash, :trust_level,
-                     :method, :hardware_id)
+                     :method, :hardware_id, CAST(:country_code AS VARCHAR(5)))
                 ON CONFLICT (user_id) DO NOTHING
                 RETURNING id, bound_at
                 """
@@ -356,6 +364,7 @@ async def _persist_binding(
                 "trust_level": trust_level.value,
                 "method": method.value,
                 "hardware_id": hardware_id,
+                "country_code": iso_cc,
             },
         )
         row = result.mappings().first()
@@ -389,7 +398,16 @@ async def _persist_binding(
                 },
             )
 
-        iso_cc = country_code or region_code_for_e164(real_phone)
+        await session.execute(
+            text(
+                """
+                UPDATE phone_identities
+                SET country_code = COALESCE(country_code, CAST(:cc AS VARCHAR(5)))
+                WHERE id = CAST(:pid AS uuid)
+                """
+            ),
+            {"cc": iso_cc, "pid": str(identity_id)},
+        )
 
         await session.execute(
             text(
@@ -428,7 +446,15 @@ async def _persist_binding(
     # App Attest has no OTP request_id row in phone_verification_attempts.
     # SMS completion is recorded in confirm_binding via _upsert_attempt (same request_id).
     if method == VerificationMethod.APP_ATTEST:
-        await _log_attempt(user_id, real_phone, method, "completed", ip, user_agent)
+        await _log_attempt(
+            user_id,
+            real_phone,
+            method,
+            "completed",
+            ip,
+            user_agent,
+            country_code=iso_cc,
+        )
     return bound_at
 
 
@@ -439,6 +465,7 @@ async def _log_attempt(
     attempt_status: str,
     ip: str | None,
     ua: str | None,
+    country_code: str | None = None,
 ) -> None:
     if not async_session_maker:
         return
@@ -451,10 +478,10 @@ async def _log_attempt(
                         """
                         INSERT INTO phone_verification_attempts
                             (user_id, real_phone, channel, status, ip_address, user_agent,
-                             completed_at)
+                             completed_at, country_code)
                         VALUES
                             (CAST(:uid AS uuid), :phone, :channel, :status, CAST(:ip AS inet), :ua,
-                             :completed_at)
+                             :completed_at, CAST(:country_code AS VARCHAR(5)))
                         """
                     ),
                     {
@@ -465,6 +492,7 @@ async def _log_attempt(
                         "ip": ip,
                         "ua": ua,
                         "completed_at": completed_at,
+                        "country_code": country_code,
                     },
                 )
             else:
@@ -473,10 +501,10 @@ async def _log_attempt(
                         """
                         INSERT INTO phone_verification_attempts
                             (user_id, real_phone, channel, status, ip_address, user_agent,
-                             completed_at)
+                             completed_at, country_code)
                         VALUES
                             (CAST(:uid AS uuid), :phone, :channel, :status, NULL, :ua,
-                             :completed_at)
+                             :completed_at, CAST(:country_code AS VARCHAR(5)))
                         """
                     ),
                     {
@@ -486,6 +514,7 @@ async def _log_attempt(
                         "status": attempt_status,
                         "ua": ua,
                         "completed_at": completed_at,
+                        "country_code": country_code,
                     },
                 )
             await session.commit()
@@ -502,6 +531,7 @@ async def _upsert_attempt(
     ip: str | None,
     ua: str | None,
     failure_reason: str | None,
+    country_code: str | None = None,
 ) -> None:
     """
     One row per OTP request_id:
@@ -522,6 +552,7 @@ async def _upsert_attempt(
             "completed_at": completed_at,
             "request_id": request_id,
             "failure_reason": failure_reason,
+            "country_code": country_code,
         }
         async with async_session_maker() as session:
             # Partial unique index on request_id cannot back ON CONFLICT (request_id).
@@ -537,7 +568,9 @@ async def _upsert_attempt(
                         ip_address = CAST(:ip AS inet),
                         user_agent = :ua,
                         completed_at = :completed_at,
-                        failure_reason = :failure_reason
+                        failure_reason = :failure_reason,
+                        country_code = COALESCE(CAST(:country_code AS VARCHAR(5)),
+                            phone_verification_attempts.country_code)
                     WHERE request_id = :request_id
                     """
                 ),
@@ -550,10 +583,11 @@ async def _upsert_attempt(
                             """
                             INSERT INTO phone_verification_attempts
                                 (user_id, real_phone, channel, status, ip_address, user_agent,
-                                 completed_at, request_id, failure_reason)
+                                 completed_at, request_id, failure_reason, country_code)
                             VALUES
                                 (CAST(:uid AS uuid), :phone, :channel, :status,
-                                 CAST(:ip AS inet), :ua, :completed_at, :request_id, :failure_reason)
+                                 CAST(:ip AS inet), :ua, :completed_at, :request_id, :failure_reason,
+                                 CAST(:country_code AS VARCHAR(5)))
                             """
                         ),
                         params,
@@ -572,7 +606,9 @@ async def _upsert_attempt(
                                 ip_address = CAST(:ip AS inet),
                                 user_agent = :ua,
                                 completed_at = :completed_at,
-                                failure_reason = :failure_reason
+                                failure_reason = :failure_reason,
+                                country_code = COALESCE(CAST(:country_code AS VARCHAR(5)),
+                                    phone_verification_attempts.country_code)
                             WHERE request_id = :request_id
                             """
                         ),
