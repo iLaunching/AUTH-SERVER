@@ -1,3 +1,5 @@
+"""E.164 validation — copied from legacy verification module."""
+
 import phonenumbers
 from phonenumbers import NumberParseException, PhoneNumberFormat
 
@@ -27,5 +29,4 @@ def validate_and_normalise(raw: str, region: str = "GB") -> tuple[str, str]:
 
     e164 = phonenumbers.format_number(parsed, PhoneNumberFormat.E164)
     detected_region = phonenumbers.region_code_for_number(parsed)
-    return e164, detected_region
-
+    return e164, detected_region or region.upper()

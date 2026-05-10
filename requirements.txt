@@ -24,6 +24,9 @@ structlog==23.2.0
 # Phase 1: HTTP Client
 httpx==0.25.2
 
+# SMS (AWS SNS provider)
+boto3>=1.34.0
+
 # Phone number validation (E.164)
 phonenumbers==8.13.50
 
