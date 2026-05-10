@@ -229,6 +229,15 @@ async def revoke_identity(user_id: str) -> None:
             ),
             {"uid": user_id},
         )
+        await session.execute(
+            text(
+                """
+                UPDATE user_profiles SET phone_identity_id = NULL, updated_at = NOW()
+                WHERE user_id = CAST(:uid AS uuid)
+                """
+            ),
+            {"uid": user_id},
+        )
         await session.commit()
 
     await delete(redis_keys().identity(user_id))
@@ -365,8 +374,15 @@ async def _persist_binding(
         await session.execute(
             text(
                 """
-                UPDATE user_profiles SET phone = :phone, updated_at = NOW()
-                WHERE user_id = CAST(:uid AS uuid)
+                UPDATE user_profiles up
+                SET
+                    phone = :phone,
+                    phone_identity_id = pi.id,
+                    updated_at = NOW()
+                FROM phone_identities pi
+                WHERE up.user_id = CAST(:uid AS uuid)
+                  AND pi.user_id = up.user_id
+                  AND pi.revoked_at IS NULL
                 """
             ),
             {"phone": real_phone, "uid": user_id},

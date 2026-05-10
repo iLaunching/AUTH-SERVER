@@ -108,6 +108,8 @@ async def init_database():
             # Phase 2: Import user models to register them with Base
             try:
                 from models.user import User, Session, UserProfile, LoginAttempt
+                from models.phone_identity import PhoneIdentity  # noqa: F401
+
                 logger.info("User models imported successfully")
             except ImportError as e:
                 logger.error("Could not import user models", error=str(e))

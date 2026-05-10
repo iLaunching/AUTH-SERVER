@@ -117,6 +117,12 @@ class UserProfile(Base):
     last_name = Column(Text)
     # Ear / routing — synapse_number moved to api-server smart_hubs table (keep auth-api resilient)
     phone = Column(String(20))
+    phone_identity_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("phone_identities.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
     bio = Column(Text)
     timezone = Column(String(50), default="UTC")
     language = Column(String(10), default="en")
@@ -152,6 +158,12 @@ class UserProfile(Base):
     
     # Relationships
     user = relationship("User", back_populates="profile")
+    phone_identity = relationship(
+        "PhoneIdentity",
+        foreign_keys=[phone_identity_id],
+        back_populates="user_profile",
+        uselist=False,
+    )
     appearance = relationship("OptionValue", foreign_keys=[appearance_id])
     itheme = relationship("OptionValue", foreign_keys=[itheme_id])
     account_type = relationship("OptionValue", foreign_keys=[account_type_id])
@@ -167,6 +179,9 @@ class UserProfile(Base):
             "first_name": self.first_name,
             "last_name": self.last_name,
             "phone": self.phone,
+            "phone_identity_id": (
+                str(self.phone_identity_id) if self.phone_identity_id else None
+            ),
             "avatar_url": self.avatar_url,
             "avatar_icon": self.avatar_icon,
             "avatar_image": self.avatar_image,
