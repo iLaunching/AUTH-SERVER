@@ -387,8 +387,10 @@ async def _persist_binding(
     except Exception as exc:
         logger.error("[Identity] Cache update failed", error=str(exc))
 
-    # App Attest path has no OTP request_id; keep a simple completed audit row.
-    await _log_attempt(user_id, real_phone, method, "completed", ip, user_agent)
+    # App Attest has no OTP request_id row in phone_verification_attempts.
+    # SMS completion is recorded in confirm_binding via _upsert_attempt (same request_id).
+    if method == VerificationMethod.APP_ATTEST:
+        await _log_attempt(user_id, real_phone, method, "completed", ip, user_agent)
     return bound_at
 
 
