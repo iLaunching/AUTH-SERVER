@@ -27,10 +27,10 @@ class _OTPRecord:
     request_id: str
 
 
-async def send_otp(phone: str) -> str:
+async def send_otp(phone: str, request_id: str | None = None) -> str:
     s = get_identity_settings()
     code = _generate_code(s.otp_length)
-    request_id = secrets.token_urlsafe(24)
+    request_id = request_id or secrets.token_urlsafe(24)
 
     record = _OTPRecord(
         phone=phone,

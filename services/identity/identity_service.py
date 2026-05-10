@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import secrets
 from datetime import datetime, timezone
 
 import structlog
@@ -83,10 +84,21 @@ async def start_binding(
             real_phone_e164=e164,
         )
 
+    request_id = secrets.token_urlsafe(24)
+    # One attempt row per OTP request_id (status pending -> completed/failed).
     asyncio.create_task(
-        _log_attempt(user_id, e164, VerificationMethod.SMS, "pending", ip, user_agent)
+        _upsert_attempt(
+            user_id=user_id,
+            phone=e164,
+            method=VerificationMethod.SMS,
+            request_id=request_id,
+            attempt_status="pending",
+            ip=ip,
+            ua=user_agent,
+            failure_reason=None,
+        )
     )
-    request_id = await send_otp(e164)
+    request_id = await send_otp(e164, request_id=request_id)
 
     return BindPhoneResponse(
         status=BindStatus.PENDING_OTP,
@@ -113,6 +125,20 @@ async def confirm_binding(
         method=VerificationMethod.SMS,
         trust_level=TrustLevel.MED,
         ip=ip,
+    )
+
+    # Mark the pending attempt as completed (best effort).
+    asyncio.create_task(
+        _upsert_attempt(
+            user_id=user_id,
+            phone=real_phone,
+            method=VerificationMethod.SMS,
+            request_id=request_id,
+            attempt_status="completed",
+            ip=ip,
+            ua=None,
+            failure_reason=None,
+        )
     )
 
     return ConfirmOTPResponse(
@@ -145,7 +171,20 @@ async def resend_otp(
 ) -> str:
     await check_limits(ip, raw_phone, user_id)
     e164, _ = validate_and_normalise(raw_phone, region)
-    return await send_otp(e164)
+    request_id = secrets.token_urlsafe(24)
+    asyncio.create_task(
+        _upsert_attempt(
+            user_id=user_id,
+            phone=e164,
+            method=VerificationMethod.SMS,
+            request_id=request_id,
+            attempt_status="pending",
+            ip=ip,
+            ua=None,
+            failure_reason=None,
+        )
+    )
+    return await send_otp(e164, request_id=request_id)
 
 
 async def revoke_identity(user_id: str) -> None:
@@ -319,6 +358,7 @@ async def _persist_binding(
     except Exception as exc:
         logger.error("[Identity] Cache update failed", error=str(exc))
 
+    # App Attest path has no OTP request_id; keep a simple completed audit row.
     await _log_attempt(user_id, real_phone, method, "completed", ip, user_agent)
     return bound_at
 
@@ -382,3 +422,61 @@ async def _log_attempt(
             await session.commit()
     except Exception as exc:
         logger.error("[Identity] Failed to log attempt", error=str(exc))
+
+
+async def _upsert_attempt(
+    user_id: str,
+    phone: str,
+    method: VerificationMethod,
+    request_id: str,
+    attempt_status: str,
+    ip: str | None,
+    ua: str | None,
+    failure_reason: str | None,
+) -> None:
+    """
+    One row per OTP request_id:
+      - bind/resend inserts pending
+      - confirm updates to completed
+    """
+    if not async_session_maker:
+        return
+    try:
+        completed_at = None if attempt_status == "pending" else datetime.now(timezone.utc)
+        async with async_session_maker() as session:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO phone_verification_attempts
+                        (user_id, real_phone, channel, status, ip_address, user_agent,
+                         completed_at, request_id, failure_reason)
+                    VALUES
+                        (CAST(:uid AS uuid), :phone, :channel, :status,
+                         CAST(:ip AS inet), :ua, :completed_at, :request_id, :failure_reason)
+                    ON CONFLICT (request_id) DO UPDATE
+                    SET
+                        user_id = EXCLUDED.user_id,
+                        real_phone = EXCLUDED.real_phone,
+                        channel = EXCLUDED.channel,
+                        status = EXCLUDED.status,
+                        ip_address = EXCLUDED.ip_address,
+                        user_agent = EXCLUDED.user_agent,
+                        completed_at = EXCLUDED.completed_at,
+                        failure_reason = EXCLUDED.failure_reason
+                    """
+                ),
+                {
+                    "uid": user_id,
+                    "phone": phone,
+                    "channel": method.value,
+                    "status": attempt_status,
+                    "ip": ip,
+                    "ua": ua,
+                    "completed_at": completed_at,
+                    "request_id": request_id,
+                    "failure_reason": failure_reason,
+                },
+            )
+            await session.commit()
+    except Exception as exc:
+        logger.error("[Identity] Failed to upsert attempt", error=str(exc))
