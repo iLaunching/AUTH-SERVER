@@ -341,7 +341,7 @@ async def _persist_binding(
                     (CAST(:user_id AS uuid), :real_phone, :phone_hash, :trust_level,
                      :method, :hardware_id)
                 ON CONFLICT (user_id) DO NOTHING
-                RETURNING bound_at
+                RETURNING id, bound_at
                 """
             ),
             {
@@ -354,14 +354,16 @@ async def _persist_binding(
             },
         )
         row = result.mappings().first()
+        identity_id = None
         if row:
+            identity_id = row["id"]
             bound_at = row["bound_at"]
 
-        if bound_at is None:
+        if identity_id is None:
             r2 = await session.execute(
                 text(
                     """
-                    SELECT bound_at FROM phone_identities
+                    SELECT id, bound_at FROM phone_identities
                     WHERE user_id = CAST(:uid AS uuid) AND revoked_at IS NULL LIMIT 1
                     """
                 ),
@@ -369,23 +371,31 @@ async def _persist_binding(
             )
             row2 = r2.mappings().first()
             if row2:
+                identity_id = row2["id"]
                 bound_at = row2["bound_at"]
+
+        if identity_id is None:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "error": "Phone identity row missing after bind.",
+                    "code": "PHONE_IDENTITY_PERSIST_FAILED",
+                },
+            )
 
         await session.execute(
             text(
                 """
-                UPDATE user_profiles up
+                UPDATE user_profiles
                 SET
                     phone = :phone,
-                    phone_identity_id = pi.id,
+                    phone_identity_id = CAST(:pid AS uuid),
                     updated_at = NOW()
-                FROM phone_identities pi
-                WHERE up.user_id = CAST(:uid AS uuid)
-                  AND pi.user_id = up.user_id
-                  AND pi.revoked_at IS NULL
+                WHERE user_id = CAST(:uid AS uuid)
                 """
             ),
-            {"phone": real_phone, "uid": user_id},
+            {"phone": real_phone, "pid": str(identity_id), "uid": user_id},
         )
         await session.commit()
 
