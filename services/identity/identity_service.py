@@ -390,16 +390,19 @@ async def _persist_binding(
         await session.execute(
             text(
                 """
-                UPDATE user_profiles
+                UPDATE user_profiles up
                 SET
-                    phone = :phone,
-                    phone_identity_id = CAST(:pid AS uuid),
+                    phone = pi.real_phone,
+                    phone_identity_id = pi.id,
                     phone_varified = TRUE,
                     updated_at = NOW()
-                WHERE user_id = CAST(:uid AS uuid)
+                FROM phone_identities pi
+                WHERE up.user_id = CAST(:uid AS uuid)
+                  AND pi.id = CAST(:pid AS uuid)
+                  AND pi.user_id = up.user_id
                 """
             ),
-            {"phone": real_phone, "pid": str(identity_id), "uid": user_id},
+            {"pid": str(identity_id), "uid": user_id},
         )
         await session.commit()
 
