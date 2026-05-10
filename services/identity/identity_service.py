@@ -334,6 +334,7 @@ async def _log_attempt(
     if not async_session_maker:
         return
     try:
+        completed_at = None if attempt_status == "pending" else datetime.now(timezone.utc)
         async with async_session_maker() as session:
             if ip:
                 await session.execute(
@@ -344,7 +345,7 @@ async def _log_attempt(
                              completed_at)
                         VALUES
                             (CAST(:uid AS uuid), :phone, :channel, :status, CAST(:ip AS inet), :ua,
-                             CASE WHEN :status != 'pending'::varchar THEN NOW() ELSE NULL END)
+                             :completed_at)
                         """
                     ),
                     {
@@ -354,6 +355,7 @@ async def _log_attempt(
                         "status": attempt_status,
                         "ip": ip,
                         "ua": ua,
+                        "completed_at": completed_at,
                     },
                 )
             else:
@@ -365,7 +367,7 @@ async def _log_attempt(
                              completed_at)
                         VALUES
                             (CAST(:uid AS uuid), :phone, :channel, :status, NULL, :ua,
-                             CASE WHEN :status != 'pending'::varchar THEN NOW() ELSE NULL END)
+                             :completed_at)
                         """
                     ),
                     {
@@ -374,6 +376,7 @@ async def _log_attempt(
                         "channel": method.value,
                         "status": attempt_status,
                         "ua": ua,
+                        "completed_at": completed_at,
                     },
                 )
             await session.commit()
