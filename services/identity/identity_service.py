@@ -85,20 +85,35 @@ async def start_binding(
         )
 
     request_id = secrets.token_urlsafe(24)
-    # One attempt row per OTP request_id (status pending -> completed/failed).
-    asyncio.create_task(
-        _upsert_attempt(
-            user_id=user_id,
-            phone=e164,
-            method=VerificationMethod.SMS,
-            request_id=request_id,
-            attempt_status="pending",
-            ip=ip,
-            ua=user_agent,
-            failure_reason=None,
-        )
+    # Strict tracking: persist pending attempt BEFORE sending SMS.
+    await _upsert_attempt(
+        user_id=user_id,
+        phone=e164,
+        method=VerificationMethod.SMS,
+        request_id=request_id,
+        attempt_status="pending",
+        ip=ip,
+        ua=user_agent,
+        failure_reason=None,
     )
-    request_id = await send_otp(e164, request_id=request_id)
+    try:
+        request_id = await send_otp(e164, request_id=request_id)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
+            provider_err = None
+            if isinstance(exc.detail, dict):
+                provider_err = exc.detail.get("provider_error")
+            await _upsert_attempt(
+                user_id=user_id,
+                phone=e164,
+                method=VerificationMethod.SMS,
+                request_id=request_id,
+                attempt_status="failed",
+                ip=ip,
+                ua=user_agent,
+                failure_reason=str(provider_err or "SMS_FAILED"),
+            )
+        raise
 
     return BindPhoneResponse(
         status=BindStatus.PENDING_OTP,
@@ -127,18 +142,16 @@ async def confirm_binding(
         ip=ip,
     )
 
-    # Mark the pending attempt as completed (best effort).
-    asyncio.create_task(
-        _upsert_attempt(
-            user_id=user_id,
-            phone=real_phone,
-            method=VerificationMethod.SMS,
-            request_id=request_id,
-            attempt_status="completed",
-            ip=ip,
-            ua=None,
-            failure_reason=None,
-        )
+    # Strict tracking: mark the same attempt as completed before returning.
+    await _upsert_attempt(
+        user_id=user_id,
+        phone=real_phone,
+        method=VerificationMethod.SMS,
+        request_id=request_id,
+        attempt_status="completed",
+        ip=ip,
+        ua=None,
+        failure_reason=None,
     )
 
     return ConfirmOTPResponse(
@@ -172,19 +185,34 @@ async def resend_otp(
     await check_limits(ip, raw_phone, user_id)
     e164, _ = validate_and_normalise(raw_phone, region)
     request_id = secrets.token_urlsafe(24)
-    asyncio.create_task(
-        _upsert_attempt(
-            user_id=user_id,
-            phone=e164,
-            method=VerificationMethod.SMS,
-            request_id=request_id,
-            attempt_status="pending",
-            ip=ip,
-            ua=None,
-            failure_reason=None,
-        )
+    await _upsert_attempt(
+        user_id=user_id,
+        phone=e164,
+        method=VerificationMethod.SMS,
+        request_id=request_id,
+        attempt_status="pending",
+        ip=ip,
+        ua=None,
+        failure_reason=None,
     )
-    return await send_otp(e164, request_id=request_id)
+    try:
+        return await send_otp(e164, request_id=request_id)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
+            provider_err = None
+            if isinstance(exc.detail, dict):
+                provider_err = exc.detail.get("provider_error")
+            await _upsert_attempt(
+                user_id=user_id,
+                phone=e164,
+                method=VerificationMethod.SMS,
+                request_id=request_id,
+                attempt_status="failed",
+                ip=ip,
+                ua=None,
+                failure_reason=str(provider_err or "SMS_FAILED"),
+            )
+        raise
 
 
 async def revoke_identity(user_id: str) -> None:

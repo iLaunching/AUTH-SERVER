@@ -63,7 +63,11 @@ async def send_otp(phone: str, request_id: str | None = None) -> str:
         logger.error("[OTP] SMS delivery failed", phone=phone, error=result.error)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"error": "Failed to send verification code. Please try again.", "code": "SMS_FAILED"},
+            detail={
+                "error": "Failed to send verification code. Please try again.",
+                "code": "SMS_FAILED",
+                "provider_error": result.error,
+            },
         )
 
     logger.info("[OTP] Code sent", request_id=request_id)
