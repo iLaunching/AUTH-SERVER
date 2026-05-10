@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import structlog
 from fastapi import HTTPException, status
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from config.database import async_session_maker
 
@@ -471,40 +472,72 @@ async def _upsert_attempt(
         return
     try:
         completed_at = None if attempt_status == "pending" else datetime.now(timezone.utc)
+        params = {
+            "uid": user_id,
+            "phone": phone,
+            "channel": method.value,
+            "status": attempt_status,
+            "ip": ip,
+            "ua": ua,
+            "completed_at": completed_at,
+            "request_id": request_id,
+            "failure_reason": failure_reason,
+        }
         async with async_session_maker() as session:
-            await session.execute(
+            # Partial unique index on request_id cannot back ON CONFLICT (request_id).
+            result = await session.execute(
                 text(
                     """
-                    INSERT INTO phone_verification_attempts
-                        (user_id, real_phone, channel, status, ip_address, user_agent,
-                         completed_at, request_id, failure_reason)
-                    VALUES
-                        (CAST(:uid AS uuid), :phone, :channel, :status,
-                         CAST(:ip AS inet), :ua, :completed_at, :request_id, :failure_reason)
-                    ON CONFLICT (request_id) DO UPDATE
+                    UPDATE phone_verification_attempts
                     SET
-                        user_id = EXCLUDED.user_id,
-                        real_phone = EXCLUDED.real_phone,
-                        channel = EXCLUDED.channel,
-                        status = EXCLUDED.status,
-                        ip_address = EXCLUDED.ip_address,
-                        user_agent = EXCLUDED.user_agent,
-                        completed_at = EXCLUDED.completed_at,
-                        failure_reason = EXCLUDED.failure_reason
+                        user_id = CAST(:uid AS uuid),
+                        real_phone = :phone,
+                        channel = :channel,
+                        status = :status,
+                        ip_address = CAST(:ip AS inet),
+                        user_agent = :ua,
+                        completed_at = :completed_at,
+                        failure_reason = :failure_reason
+                    WHERE request_id = :request_id
                     """
                 ),
-                {
-                    "uid": user_id,
-                    "phone": phone,
-                    "channel": method.value,
-                    "status": attempt_status,
-                    "ip": ip,
-                    "ua": ua,
-                    "completed_at": completed_at,
-                    "request_id": request_id,
-                    "failure_reason": failure_reason,
-                },
+                params,
             )
+            if result.rowcount == 0:
+                try:
+                    await session.execute(
+                        text(
+                            """
+                            INSERT INTO phone_verification_attempts
+                                (user_id, real_phone, channel, status, ip_address, user_agent,
+                                 completed_at, request_id, failure_reason)
+                            VALUES
+                                (CAST(:uid AS uuid), :phone, :channel, :status,
+                                 CAST(:ip AS inet), :ua, :completed_at, :request_id, :failure_reason)
+                            """
+                        ),
+                        params,
+                    )
+                except IntegrityError:
+                    await session.rollback()
+                    await session.execute(
+                        text(
+                            """
+                            UPDATE phone_verification_attempts
+                            SET
+                                user_id = CAST(:uid AS uuid),
+                                real_phone = :phone,
+                                channel = :channel,
+                                status = :status,
+                                ip_address = CAST(:ip AS inet),
+                                user_agent = :ua,
+                                completed_at = :completed_at,
+                                failure_reason = :failure_reason
+                            WHERE request_id = :request_id
+                            """
+                        ),
+                        params,
+                    )
             await session.commit()
     except Exception as exc:
         logger.error("[Identity] Failed to upsert attempt", error=str(exc))
