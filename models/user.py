@@ -57,13 +57,11 @@ class User(Base):
             "last_login": self.last_login.isoformat() if self.last_login else None,
         }
         
-        # Include profile info if available (shared column name `phone_varified` — legacy spelling)
+        # Include profile info if available
         if self.profile:
             data["onboarding_completed"] = self.profile.onboarding_completed
-            data["phone_varified"] = self.profile.phone_varified
         else:
             data["onboarding_completed"] = False
-            data["phone_varified"] = False
         
         if include_sensitive:
             data["password_hash"] = self.password_hash
