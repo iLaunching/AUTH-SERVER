@@ -57,11 +57,18 @@ class User(Base):
             "last_login": self.last_login.isoformat() if self.last_login else None,
         }
         
-        # Include profile info if available
+        # Include profile info if available (shared DB column spellings where legacy)
         if self.profile:
             data["onboarding_completed"] = self.profile.onboarding_completed
+            data["has_user_profile"] = True
+            data["phone_varified"] = self.profile.phone_varified
+            # DB column: "activeChat_onBoarding_complete" — stable JSON name for clients
+            data["chat_onboarding_complete"] = self.profile.activeChat_onBoarding_complete
         else:
             data["onboarding_completed"] = False
+            data["has_user_profile"] = False
+            data["phone_varified"] = False
+            data["chat_onboarding_complete"] = False
         
         if include_sensitive:
             data["password_hash"] = self.password_hash
