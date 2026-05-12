@@ -151,7 +151,14 @@ class UserProfile(Base):
     
     # Onboarding
     onboarding_completed = Column(Boolean, default=False)
-    
+    activeChat_onBoarding_complete = Column(
+        "activeChat_onBoarding_complete",
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+
     # Navigation (one-to-one with user_navigation table)
     user_navigation_id = Column(UUID(as_uuid=True), nullable=True, unique=True, index=True)
     
@@ -201,6 +208,7 @@ class UserProfile(Base):
             "agree_to_marketing": self.agree_to_marketing,
             "agree_to_terms": self.agree_to_terms,
             "onboarding_completed": self.onboarding_completed,
+            "activeChat_onBoarding_complete": self.activeChat_onBoarding_complete,
         }
 
 
