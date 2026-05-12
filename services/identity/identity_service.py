@@ -417,6 +417,7 @@ async def _persist_binding(
                     phone = pi.real_phone,
                     phone_identity_id = pi.id,
                     phone_varified = TRUE,
+                    "activeChat_onBoarding_complete" = TRUE,
                     country_code = COALESCE(CAST(:cc AS VARCHAR(5)), up.country_code),
                     updated_at = NOW()
                 FROM phone_identities pi
