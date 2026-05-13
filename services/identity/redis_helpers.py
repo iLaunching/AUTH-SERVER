@@ -38,6 +38,10 @@ class IdentityKeys:
     def rate_user(self, user_id: str) -> str:
         return f"{self._p}rl:user:{user_id}"
 
+    def active_otp_for_user(self, user_id: str) -> str:
+        """Points at the current `request_id` for this user's in-flight SMS OTP (one bind at a time per user)."""
+        return f"{self._p}otp_active_user:{user_id}"
+
 
 def keys() -> IdentityKeys:
     return IdentityKeys(get_identity_settings().redis_key_prefix)

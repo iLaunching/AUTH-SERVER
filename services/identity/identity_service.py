@@ -100,7 +100,9 @@ async def start_binding(
         country_code=iso_region,
     )
     try:
-        request_id = await send_otp(e164, request_id=request_id, country_code=iso_region)
+        request_id = await send_otp(
+            e164, request_id=request_id, country_code=iso_region, user_id=user_id
+        )
     except HTTPException as exc:
         if exc.status_code == status.HTTP_502_BAD_GATEWAY:
             provider_err = None
@@ -204,7 +206,9 @@ async def resend_otp(
         country_code=iso_region,
     )
     try:
-        return await send_otp(e164, request_id=request_id, country_code=iso_region)
+        return await send_otp(
+            e164, request_id=request_id, country_code=iso_region, user_id=user_id
+        )
     except HTTPException as exc:
         if exc.status_code == status.HTTP_502_BAD_GATEWAY:
             provider_err = None
