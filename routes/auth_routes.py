@@ -5,6 +5,7 @@ Handles user signup, login, token refresh, and email checking.
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import os
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
@@ -1141,3 +1142,21 @@ async def update_onboarding_status(
             status_code=500,
             detail="Failed to update onboarding status"
         )
+
+
+class MeshConfigResponse(BaseModel):
+    """Public mesh router endpoint for clients after login (Phase 3)."""
+    router_url: str = Field(..., description="WebTransport/QUIC URL, e.g. https://sma-router.fly.dev:4433")
+    protocol_version: int = Field(default=1, description="SMA wire protocol version")
+
+
+@router.get("/auth/mesh-config", response_model=MeshConfigResponse)
+async def mesh_config():
+    """
+    Returns the blind router URL clients should open a persistent WebTransport session to.
+    Set SMA_ROUTER_URL on auth-api (same value as iOS Info.plist / client config).
+    """
+    router_url = os.getenv("SMA_ROUTER_URL", "").strip()
+    if not router_url:
+        logger.warning("SMA_ROUTER_URL not configured — mesh clients cannot connect")
+    return MeshConfigResponse(router_url=router_url, protocol_version=1)
