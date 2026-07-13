@@ -1146,7 +1146,7 @@ async def update_onboarding_status(
 
 class MeshConfigResponse(BaseModel):
     """Public mesh router endpoint for clients after login (Phase 3)."""
-    router_url: str = Field(..., description="WebTransport/QUIC URL, e.g. https://sma-router.fly.dev:4433")
+    router_url: str = Field(..., description="WebTransport/QUIC URL, e.g. https://mesh.ilaunching.com:4433")
     protocol_version: int = Field(default=1, description="SMA wire protocol version")
 
 
