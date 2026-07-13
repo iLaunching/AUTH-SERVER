@@ -430,7 +430,7 @@ async def signup(
             device_info=device_info,
             ip_address=ip_address,
             user_agent=request.headers.get("User-Agent", ""),
-            expires_at=datetime.utcnow() + timedelta(days=30)
+            expires_at=datetime.now(timezone.utc) + timedelta(days=30)
         )
         db.add(session)
         await db.flush()  # Get session ID
@@ -584,7 +584,7 @@ async def login(
             device_info=device_info,
             ip_address=ip_address,
             user_agent=user_agent,
-            expires_at=datetime.utcnow() + timedelta(days=30)
+            expires_at=datetime.now(timezone.utc) + timedelta(days=30)
         )
         db.add(session)
         await db.flush()  # Get session ID
@@ -890,7 +890,7 @@ async def check_email_for_signup(
                 device_info=device_info,
                 ip_address=get_client_ip(req),
                 user_agent=req.headers.get("user-agent", "unknown"),
-                expires_at=datetime.utcnow() + timedelta(days=30),
+                expires_at=datetime.now(timezone.utc) + timedelta(days=30),
             )
             db.add(session)
             await db.flush()
