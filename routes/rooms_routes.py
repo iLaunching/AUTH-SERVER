@@ -20,6 +20,8 @@ class RegisterRoomMembersRequest(BaseModel):
     room_key_b64: str
     member_can_send_messages: bool = True
     member_can_add_members: bool = False
+    room_context: str = "MultiParty"
+    invited_by_display_name: str = ""
 
     @field_validator("room_id", "room_key_b64")
     @classmethod
@@ -44,6 +46,9 @@ class RoomInviteItem(BaseModel):
     member_can_send_messages: bool = True
     member_can_add_members: bool = False
     created_at: str | None = None
+    room_context: str | None = None
+    invited_by_display_name: str | None = None
+    invited_by_phone: str | None = None
 
 
 class RoomInvitesResponse(BaseModel):
@@ -72,6 +77,8 @@ async def register_members(
         room_key_b64=body.room_key_b64,
         member_can_send_messages=body.member_can_send_messages,
         member_can_add_members=body.member_can_add_members,
+        room_context=body.room_context,
+        invited_by_display_name=body.invited_by_display_name,
     )
     return RegisterRoomMembersResponse(**result)
 

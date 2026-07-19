@@ -51,6 +51,8 @@ async def register_room_membership(
     room_key_b64: str,
     member_can_send_messages: bool = True,
     member_can_add_members: bool = False,
+    room_context: str = "MultiParty",
+    invited_by_display_name: str = "",
 ) -> dict[str, Any]:
     """Replace ACL set for room and enqueue invites for non-creator members."""
     room_id = _parse_uuid(room_id, "room_id")
@@ -77,12 +79,28 @@ async def register_room_membership(
     if members:
         await client.sadd(acl, *members)
 
+    invited_by_phone: str | None = None
+    try:
+        from services.identity import identity_service
+
+        identity = await identity_service.get_identity(creator_user_id)
+        if identity and identity.get("real_phone"):
+            invited_by_phone = str(identity["real_phone"])
+    except Exception:
+        invited_by_phone = None
+
+    display = (invited_by_display_name or "").strip()
+    context = (room_context or "MultiParty").strip() or "MultiParty"
+
     now = datetime.now(timezone.utc).isoformat()
     invite_payload = {
         "room_id": room_id,
         "room_name": room_name or "Room",
         "room_key_b64": room_key_b64.strip(),
         "invited_by": creator_user_id,
+        "invited_by_display_name": display,
+        "invited_by_phone": invited_by_phone,
+        "room_context": context,
         "member_can_send_messages": member_can_send_messages,
         "member_can_add_members": member_can_add_members,
         "created_at": now,
