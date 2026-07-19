@@ -277,6 +277,68 @@ async def _get_identity_cached(user_id: str) -> dict | None:
     return data
 
 
+async def lookup_phones(
+    requester_user_id: str,
+    phones: list[str],
+    region: str = "GB",
+    ip: str | None = None,
+) -> dict:
+    """Resolve E.164 phones to user_id for registered (non-revoked) identities only."""
+    from .phone_validator import validate_and_normalise
+    from .rate_limiter import check_limits
+
+    await check_limits(ip=ip, phone=None, user_id=requester_user_id)
+
+    matches: list[dict] = []
+    misses: list[dict] = []
+    seen_e164: set[str] = set()
+
+    for raw in phones:
+        try:
+            e164, _ = validate_and_normalise(raw, region)
+        except HTTPException:
+            misses.append(
+                {"phone": raw.strip(), "registered": False, "reason": "invalid_phone"}
+            )
+            continue
+
+        if e164 in seen_e164:
+            continue
+        seen_e164.add(e164)
+
+        owner_id = await _owner_user_id_for_phone(e164)
+        if owner_id:
+            matches.append({"phone": e164, "user_id": owner_id, "registered": True})
+        else:
+            misses.append({"phone": e164, "registered": False, "reason": "not_bound"})
+
+    return {"matches": matches, "misses": misses}
+
+
+async def _owner_user_id_for_phone(real_phone: str) -> str | None:
+    try:
+        cached = await get_json(redis_keys().phone_owner(real_phone))
+    except Exception:
+        cached = None
+    if cached and cached.get("user_id"):
+        return str(cached["user_id"])
+
+    if not async_session_maker:
+        return None
+    async with async_session_maker() as session:
+        result = await session.execute(
+            text(
+                """
+                SELECT user_id::text AS user_id FROM phone_identities
+                WHERE real_phone = :p AND revoked_at IS NULL LIMIT 1
+                """
+            ),
+            {"p": real_phone},
+        )
+        row = result.mappings().first()
+    return str(row["user_id"]) if row else None
+
+
 async def _get_identity_from_db(user_id: str) -> dict | None:
     if not async_session_maker:
         return None

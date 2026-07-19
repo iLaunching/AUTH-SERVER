@@ -31,6 +31,7 @@ from sqlalchemy.orm import selectinload
 from routes.oauth_routes import router as oauth_router
 from routes.auth_routes import router as auth_router
 from routes.identity_routes import router as identity_router
+from routes.rooms_routes import router as rooms_router
 
 # Configure structured logging
 structlog.configure(
@@ -139,6 +140,8 @@ app.include_router(oauth_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
 # Phone identity (App Attest + SMS OTP) — feature-flagged via IDENTITY_ENABLED
 app.include_router(identity_router, prefix="/api/v1")
+# Phase 7b room membership ACL + pending invites
+app.include_router(rooms_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():

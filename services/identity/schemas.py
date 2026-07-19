@@ -84,3 +84,42 @@ class IdentityResponse(BaseModel):
     trust_level: TrustLevel
     method: VerificationMethod
     bound_at: str | datetime
+
+
+class IdentityLookupRequest(BaseModel):
+    """Batch phone → user_id lookup for room invites (registered users only)."""
+
+    phones: list[str]
+    region: str = "GB"
+
+    @field_validator("phones")
+    @classmethod
+    def phones_nonempty(cls, v: list[str]) -> list[str]:
+        cleaned = [p.strip() for p in v if p and p.strip()]
+        if not cleaned:
+            raise ValueError("phones must contain at least one number")
+        if len(cleaned) > 50:
+            raise ValueError("phones limited to 50 per request")
+        return cleaned
+
+    @field_validator("region")
+    @classmethod
+    def lookup_region_upper(cls, v: str) -> str:
+        return v.upper()
+
+
+class IdentityLookupMatch(BaseModel):
+    phone: str
+    user_id: str
+    registered: bool = True
+
+
+class IdentityLookupMiss(BaseModel):
+    phone: str
+    registered: bool = False
+    reason: str = "not_bound"
+
+
+class IdentityLookupResponse(BaseModel):
+    matches: list[IdentityLookupMatch]
+    misses: list[IdentityLookupMiss]

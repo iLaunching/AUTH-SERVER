@@ -15,6 +15,8 @@ from services.identity.schemas import (
     BindPhoneResponse,
     ConfirmOTPRequest,
     ConfirmOTPResponse,
+    IdentityLookupRequest,
+    IdentityLookupResponse,
     IdentityResponse,
     ResendOTPRequest,
     ResendOTPResponse,
@@ -128,3 +130,24 @@ async def get_identity_me(user: User = Depends(require_email_verified_user)):
             detail={"error": "No phone identity found for this account.", "code": "NOT_BOUND"},
         )
     return identity
+
+
+@router.post(
+    "/lookup",
+    response_model=IdentityLookupResponse,
+    summary="Resolve phones to user_id (registered only)",
+)
+async def lookup_phones(
+    body: IdentityLookupRequest,
+    request: Request,
+    user: User = Depends(require_email_verified_user),
+):
+    """Authenticated batch lookup for room invites. Unregistered phones appear in misses."""
+    _ensure_identity_enabled()
+    result = await identity_service.lookup_phones(
+        requester_user_id=str(user.id),
+        phones=body.phones,
+        region=body.region,
+        ip=_ip(request),
+    )
+    return IdentityLookupResponse(**result)
