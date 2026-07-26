@@ -12,11 +12,17 @@ import structlog
 
 logger = structlog.get_logger()
 
-# JWT Configuration
+# JWT Configuration — accept both unprefixed and JWT_* env names (deployed configs differ).
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))  # 15 minutes
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))  # 30 days
+ACCESS_TOKEN_EXPIRE_MINUTES = int(
+    os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
+    or os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15")
+)
+REFRESH_TOKEN_EXPIRE_DAYS = int(
+    os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS")
+    or os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "365")
+)
 
 class JWTManager:
     """Manage JWT token creation and validation"""

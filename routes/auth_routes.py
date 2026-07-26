@@ -15,9 +15,10 @@ from sqlalchemy.orm import selectinload
 import structlog
 
 from models.user import User, Session as UserSession, LoginAttempt, UserProfile, UserNavigation, OptionSet, OptionValue
-from auth.jwt_manager import JWTManager
+from auth.jwt_manager import JWTManager, REFRESH_TOKEN_EXPIRE_DAYS
 from auth.token_claims import synapse_claims_from_profile, synapse_claims_from_user
 from auth.password_handler import PasswordHandler
+from auth.session_tokens import hash_refresh_token, verify_refresh_token_hash
 from config.database import get_db
 from config.oauth import OAuthConfig
 from services.email_service import email_service
@@ -100,11 +101,15 @@ class SignupRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     account_type: Optional[str] = 'personal'  # 'personal', 'business', or 'education'
+    device_id: Optional[str] = None
+    platform: Optional[str] = None
 
 class LoginRequest(BaseModel):
     """Request model for user login"""
     email: EmailStr
     password: str
+    device_id: Optional[str] = None
+    platform: Optional[str] = None
 
 class AuthResponse(BaseModel):
     """Response model for authentication (signup/login)"""
@@ -116,16 +121,20 @@ class AuthResponse(BaseModel):
 class RefreshTokenRequest(BaseModel):
     """Request model for token refresh"""
     refresh_token: str
+    device_id: Optional[str] = None
 
 class TokenResponse(BaseModel):
-    """Response model for token refresh"""
+    """Response model for token refresh (rotates refresh_token)."""
     access_token: str
+    refresh_token: str
     token_type: str = "Bearer"
 
 class CheckEmailSignupRequest(BaseModel):
     """Request model for checking email during signup flow"""
     email: EmailStr
     password: str = Field(..., min_length=8)
+    device_id: Optional[str] = None
+    platform: Optional[str] = None
 
 class CheckEmailSignupResponse(BaseModel):
     """Response model for email check during signup"""
@@ -200,13 +209,81 @@ def get_client_ip(request: Request) -> str:
     
     return "unknown"
 
-def get_device_info(request: Request) -> dict:
-    """Extract device information from request"""
+def get_device_info(
+    request: Request,
+    device_id: Optional[str] = None,
+    platform: Optional[str] = None,
+) -> dict:
+    """Extract device information from request (+ optional client device_id)."""
     user_agent = request.headers.get("User-Agent", "unknown")
-    return {
+    info = {
         "user_agent": user_agent,
-        "platform": "web",  # Could parse user agent for more details
+        "platform": (platform or "web").strip().lower() or "web",
     }
+    if device_id:
+        cleaned = device_id.strip()
+        if cleaned:
+            info["device_id"] = cleaned
+    return info
+
+
+def _session_expiry() -> datetime:
+    return datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+
+
+async def upsert_device_session(
+    db: AsyncSession,
+    user: User,
+    request: Request,
+    device_id: Optional[str] = None,
+    platform: Optional[str] = None,
+) -> UserSession:
+    """
+    One live session per (user, device_id) when device_id is provided.
+    Reuses the row on re-login instead of piling up web-style sessions.
+    """
+    ip_address = get_client_ip(request)
+    user_agent = request.headers.get("User-Agent", "")
+    device_info = get_device_info(request, device_id=device_id, platform=platform)
+    expires_at = _session_expiry()
+    cleaned_device = (device_id or "").strip() or None
+
+    session: Optional[UserSession] = None
+    if cleaned_device:
+        result = await db.execute(
+            select(UserSession).where(
+                UserSession.user_id == user.id,
+                UserSession.revoked == False,  # noqa: E712
+            )
+        )
+        for candidate in result.scalars().all():
+            info = candidate.device_info or {}
+            if info.get("device_id") == cleaned_device:
+                session = candidate
+                break
+
+    if session is None:
+        session = UserSession(
+            user_id=user.id,
+            refresh_token_hash="",
+            device_info=device_info,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            expires_at=expires_at,
+        )
+        db.add(session)
+        await db.flush()
+    else:
+        session.device_info = device_info
+        session.ip_address = ip_address
+        session.user_agent = user_agent
+        session.expires_at = expires_at
+        session.last_accessed = datetime.utcnow()
+        session.revoked = False
+        session.revoked_at = None
+
+    return session
+
 
 # ============================================
 # Authentication Routes
@@ -420,21 +497,15 @@ async def signup(
         # Link navigation to profile
         user_profile.user_navigation_id = user_navigation.id
         
-        # Create session and tokens
-        ip_address = get_client_ip(request)
-        device_info = get_device_info(request)
-        
-        session = UserSession(
-            user_id=new_user.id,
-            refresh_token_hash="",  # Will be updated below
-            device_info=device_info,
-            ip_address=ip_address,
-            user_agent=request.headers.get("User-Agent", ""),
-            expires_at=datetime.now(timezone.utc) + timedelta(days=30)
+        # Create session and tokens (device-bound when client sends device_id)
+        session = await upsert_device_session(
+            db,
+            new_user,
+            request,
+            device_id=getattr(signup_data, "device_id", None),
+            platform=getattr(signup_data, "platform", None),
         )
-        db.add(session)
-        await db.flush()  # Get session ID
-        
+
         # Generate tokens (synapse_number claim when profile already has it, e.g. rare reuse paths)
         access_token = JWTManager.create_access_token(
             user_id=str(new_user.id),
@@ -447,9 +518,8 @@ async def signup(
             session_id=str(session.session_id)
         )
         
-        # Hash and store refresh token
-        refresh_token_hash = PasswordHandler.hash_password(refresh_token)
-        session.refresh_token_hash = refresh_token_hash
+        # Hash and store refresh token (SHA-256 covers full JWT)
+        session.refresh_token_hash = hash_refresh_token(refresh_token)
         
         # Log successful signup
         await log_login_attempt(
@@ -576,19 +646,15 @@ async def login(
         # Update last login
         user.last_login = datetime.utcnow()
         
-        # Create new session
-        device_info = get_device_info(request)
-        session = UserSession(
-            user_id=user.id,
-            refresh_token_hash="",  # Will be updated below
-            device_info=device_info,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=30)
+        # Create / reuse device-bound session
+        session = await upsert_device_session(
+            db,
+            user,
+            request,
+            device_id=login_data.device_id,
+            platform=login_data.platform,
         )
-        db.add(session)
-        await db.flush()  # Get session ID
-        
+
         # Generate tokens (include synapse_number from user_profiles when set)
         access_token = JWTManager.create_access_token(
             user_id=str(user.id),
@@ -602,15 +668,14 @@ async def login(
         )
         
         # Hash and store refresh token
-        refresh_token_hash = PasswordHandler.hash_password(refresh_token)
-        session.refresh_token_hash = refresh_token_hash
+        session.refresh_token_hash = hash_refresh_token(refresh_token)
         
         # Log successful login
         await log_login_attempt(
             db=db,
             email=email,
-            ip_address=ip_address,
-            user_agent=user_agent,
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("User-Agent", ""),
             success=True
         )
         
@@ -649,7 +714,7 @@ async def refresh_access_token(
 ):
     """
     Refresh access token using refresh token.
-    Validates refresh token and generates new access token.
+    Slides session expiry and rotates the refresh token (SHA-256 hash).
     """
     try:
         # Verify refresh token
@@ -669,7 +734,7 @@ async def refresh_access_token(
         result = await db.execute(
             select(UserSession).where(
                 UserSession.session_id == session_id,
-                UserSession.revoked == False
+                UserSession.revoked == False  # noqa: E712
             )
         )
         session = result.scalar_one_or_none()
@@ -690,12 +755,22 @@ async def refresh_access_token(
             )
         
         # Verify refresh token hash matches
-        if not PasswordHandler.verify_password(refresh_data.refresh_token, session.refresh_token_hash):
+        if not verify_refresh_token_hash(refresh_data.refresh_token, session.refresh_token_hash):
             logger.warning("Refresh token hash mismatch", session_id=session_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid refresh token"
             )
+
+        # Optional device binding check
+        if refresh_data.device_id:
+            stored = (session.device_info or {}).get("device_id")
+            if stored and stored != refresh_data.device_id.strip():
+                logger.warning("Refresh device_id mismatch", session_id=session_id)
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Device mismatch"
+                )
         
         # Get user (profile for synapse_number claim)
         result = await db.execute(
@@ -710,22 +785,33 @@ async def refresh_access_token(
                 detail="User not found"
             )
         
-        # Generate new access token
+        # Generate new access + rotated refresh token
         access_token = JWTManager.create_access_token(
             user_id=str(user.id),
             email=user.email,
             role=user.role,
             extra_claims=synapse_claims_from_user(user),
         )
+        new_refresh_token = JWTManager.create_refresh_token(
+            user_id=str(user.id),
+            session_id=str(session.session_id),
+        )
         
-        # Update session last accessed
+        # Slide window + rotate hash
+        session.refresh_token_hash = hash_refresh_token(new_refresh_token)
+        session.expires_at = _session_expiry()
         session.last_accessed = datetime.utcnow()
+        if refresh_data.device_id:
+            info = dict(session.device_info or {})
+            info["device_id"] = refresh_data.device_id.strip()
+            session.device_info = info
         await db.commit()
         
         logger.info("Access token refreshed", user_id=user_id, session_id=session_id)
         
         return TokenResponse(
-            access_token=access_token
+            access_token=access_token,
+            refresh_token=new_refresh_token,
         )
         
     except HTTPException:
@@ -774,6 +860,45 @@ async def logout(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Logout failed"
         )
+
+
+@router.post("/auth/logout-all")
+async def logout_all_devices(
+    refresh_data: RefreshTokenRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Revoke every device session for the user that owns this refresh token.
+    Kills web JWT sessions and (once mesh checks revoke) iOS Noise sessions.
+    """
+    try:
+        payload = JWTManager.verify_refresh_token(refresh_data.refresh_token)
+        if not payload:
+            return {"message": "Logged out successfully", "revoked": 0}
+
+        user_id = payload.get("sub")
+        result = await db.execute(
+            select(UserSession).where(
+                UserSession.user_id == user_id,
+                UserSession.revoked == False,  # noqa: E712
+            )
+        )
+        sessions = list(result.scalars().all())
+        now = datetime.utcnow()
+        for session in sessions:
+            session.revoked = True
+            session.revoked_at = now
+        await db.commit()
+        logger.info("User logged out of all devices", user_id=user_id, revoked=len(sessions))
+        return {"message": "Logged out of all devices", "revoked": len(sessions)}
+    except Exception as e:
+        await db.rollback()
+        logger.error("Logout-all failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Logout failed",
+        )
+
 
 # ============================================
 # Protected Route Example
@@ -883,17 +1008,13 @@ async def check_email_for_signup(
             
             # Password correct — issue session + tokens (same pattern as /auth/login)
             existing_user.last_login = datetime.utcnow()
-            device_info = {"user_agent": req.headers.get("user-agent", "unknown")}
-            session = UserSession(
-                user_id=existing_user.id,
-                refresh_token_hash="",
-                device_info=device_info,
-                ip_address=get_client_ip(req),
-                user_agent=req.headers.get("user-agent", "unknown"),
-                expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            session = await upsert_device_session(
+                db,
+                existing_user,
+                req,
+                device_id=request_data.device_id,
+                platform=request_data.platform,
             )
-            db.add(session)
-            await db.flush()
 
             access_token = JWTManager.create_access_token(
                 user_id=str(existing_user.id),
@@ -905,7 +1026,7 @@ async def check_email_for_signup(
                 user_id=str(existing_user.id),
                 session_id=str(session.session_id),
             )
-            session.refresh_token_hash = PasswordHandler.hash_password(refresh_token)
+            session.refresh_token_hash = hash_refresh_token(refresh_token)
 
             await log_login_attempt(
                 db=db,

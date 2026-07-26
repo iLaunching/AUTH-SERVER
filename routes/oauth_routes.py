@@ -14,9 +14,10 @@ import structlog
 from services.oauth_service import oauth_service
 from config.oauth import OAuthConfig
 from config.database import get_db, async_session_maker
-from auth.jwt_manager import JWTManager
+from auth.jwt_manager import JWTManager, REFRESH_TOKEN_EXPIRE_DAYS
 from auth.token_claims import synapse_claims_for_user_id
 from auth.password_handler import PasswordHandler
+from auth.session_tokens import hash_refresh_token
 from models.user import Session as UserSession
 from utils.oauth_redirect_validation import is_allowed_post_oauth_redirect
 
@@ -216,7 +217,7 @@ async def google_callback(
                     device_info={'user_agent': user_agent, 'platform': 'web'},
                     ip_address=ip_address,
                     user_agent=user_agent,
-                    expires_at=datetime.utcnow() + timedelta(days=30)
+                    expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
                 )
                 db.add(session)
                 await db.flush()
@@ -235,7 +236,7 @@ async def google_callback(
                 )
                 
                 # Hash and store refresh token
-                refresh_token_hash = PasswordHandler.hash_password(jwt_refresh_token)
+                refresh_token_hash = hash_refresh_token(jwt_refresh_token)
                 session.refresh_token_hash = refresh_token_hash
                 
                 await db.commit()
@@ -432,7 +433,7 @@ async def facebook_callback(
                     device_info={'user_agent': user_agent, 'platform': 'web'},
                     ip_address=ip_address,
                     user_agent=user_agent,
-                    expires_at=datetime.utcnow() + timedelta(days=30)
+                    expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
                 )
                 db.add(session)
                 await db.flush()
@@ -451,7 +452,7 @@ async def facebook_callback(
                 )
                 
                 # Hash and store refresh token
-                refresh_token_hash = PasswordHandler.hash_password(jwt_refresh_token)
+                refresh_token_hash = hash_refresh_token(jwt_refresh_token)
                 session.refresh_token_hash = refresh_token_hash
                 
                 await db.commit()
@@ -652,7 +653,7 @@ async def microsoft_callback(
                     device_info={'user_agent': user_agent, 'platform': 'web'},
                     ip_address=ip_address,
                     user_agent=user_agent,
-                    expires_at=datetime.utcnow() + timedelta(days=30)
+                    expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
                 )
                 db.add(session)
                 await db.flush()
@@ -671,7 +672,7 @@ async def microsoft_callback(
                 )
                 
                 # Hash and store refresh token
-                refresh_token_hash = PasswordHandler.hash_password(jwt_refresh_token)
+                refresh_token_hash = hash_refresh_token(jwt_refresh_token)
                 session.refresh_token_hash = refresh_token_hash
                 
                 await db.commit()
