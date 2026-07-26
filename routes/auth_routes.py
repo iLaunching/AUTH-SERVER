@@ -18,7 +18,11 @@ from models.user import User, Session as UserSession, LoginAttempt, UserProfile,
 from auth.jwt_manager import JWTManager, REFRESH_TOKEN_EXPIRE_DAYS
 from auth.token_claims import synapse_claims_from_profile, synapse_claims_from_user
 from auth.password_handler import PasswordHandler
-from auth.session_tokens import hash_refresh_token, verify_refresh_token_hash
+from auth.session_tokens import (
+    hash_refresh_token,
+    refresh_token_accepted,
+    store_previous_refresh_hash,
+)
 from config.database import get_db
 from config.oauth import OAuthConfig
 from services.email_service import email_service
@@ -755,13 +759,20 @@ async def refresh_access_token(
                 detail="Session expired"
             )
         
-        # Verify refresh token hash matches
-        if not verify_refresh_token_hash(refresh_data.refresh_token, session.refresh_token_hash):
+        # Verify refresh token hash matches (current, or previous within grace window)
+        accepted, used_grace = refresh_token_accepted(
+            refresh_data.refresh_token,
+            session.refresh_token_hash,
+            session.device_info,
+        )
+        if not accepted:
             logger.warning("Refresh token hash mismatch", session_id=session_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid refresh token"
             )
+        if used_grace:
+            logger.info("Refresh accepted via rotation grace window", session_id=session_id)
 
         # Optional device binding check
         if refresh_data.device_id:
@@ -798,14 +809,15 @@ async def refresh_access_token(
             session_id=str(session.session_id),
         )
         
-        # Slide window + rotate hash
+        # Keep previous hash briefly so a racing second refresh with the old token still works
+        previous_hash = session.refresh_token_hash
+        info = store_previous_refresh_hash(session.device_info, previous_hash)
+        if refresh_data.device_id:
+            info["device_id"] = refresh_data.device_id.strip()
+        session.device_info = info
         session.refresh_token_hash = hash_refresh_token(new_refresh_token)
         session.expires_at = _session_expiry()
         session.last_accessed = datetime.utcnow()
-        if refresh_data.device_id:
-            info = dict(session.device_info or {})
-            info["device_id"] = refresh_data.device_id.strip()
-            session.device_info = info
         await db.commit()
         
         logger.info("Access token refreshed", user_id=user_id, session_id=session_id)
