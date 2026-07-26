@@ -498,12 +498,13 @@ async def signup(
         user_profile.user_navigation_id = user_navigation.id
         
         # Create session and tokens (device-bound when client sends device_id)
+        ip_address = get_client_ip(request)
         session = await upsert_device_session(
             db,
             new_user,
             request,
-            device_id=getattr(signup_data, "device_id", None),
-            platform=getattr(signup_data, "platform", None),
+            device_id=signup_data.device_id,
+            platform=signup_data.platform,
         )
 
         # Generate tokens (synapse_number claim when profile already has it, e.g. rare reuse paths)
