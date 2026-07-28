@@ -1279,9 +1279,13 @@ async def update_onboarding_status(
 
 
 class MeshConfigResponse(BaseModel):
-    """Public mesh router endpoint for clients after login (Phase 3)."""
+    """Public mesh router endpoint for clients after login (Phase 3 / Phase B Noise)."""
     router_url: str = Field(..., description="WebTransport/QUIC URL, e.g. https://mesh.ilaunching.com:4433")
-    protocol_version: int = Field(default=1, description="SMA wire protocol version")
+    protocol_version: int = Field(default=1, description="SMA wire protocol version (2 = Noise IK)")
+    noise_server_public_key: str | None = Field(
+        default=None,
+        description="Base64-encoded 32-byte X25519 public key when protocol_version is 2",
+    )
 
 
 @router.get("/auth/mesh-config", response_model=MeshConfigResponse)
@@ -1289,8 +1293,15 @@ async def mesh_config():
     """
     Returns the blind router URL clients should open a persistent WebTransport session to.
     Set SMA_ROUTER_URL on auth-api (same value as iOS Info.plist / client config).
+    When NOISE_SERVER_PUBLIC_KEY is set, clients use protocol v2 (Noise IK handshake).
     """
     router_url = os.getenv("SMA_ROUTER_URL", "").strip()
     if not router_url:
         logger.warning("SMA_ROUTER_URL not configured — mesh clients cannot connect")
-    return MeshConfigResponse(router_url=router_url, protocol_version=1)
+    noise_pub = os.getenv("NOISE_SERVER_PUBLIC_KEY", "").strip()
+    protocol_version = 2 if noise_pub else 1
+    return MeshConfigResponse(
+        router_url=router_url,
+        protocol_version=protocol_version,
+        noise_server_public_key=noise_pub or None,
+    )
