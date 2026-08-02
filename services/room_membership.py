@@ -53,6 +53,8 @@ async def register_room_membership(
     member_can_add_members: bool = False,
     room_context: str = "MultiParty",
     invited_by_display_name: str = "",
+    invited_by_poster_config: str | None = None,
+    invited_by_poster_text_values: str | None = None,
 ) -> dict[str, Any]:
     """Replace ACL set for room and enqueue invites for non-creator members."""
     room_id = _parse_uuid(room_id, "room_id")
@@ -91,9 +93,13 @@ async def register_room_membership(
 
     display = (invited_by_display_name or "").strip()
     context = (room_context or "MultiParty").strip() or "MultiParty"
+    poster_config = (invited_by_poster_config or "").strip() or None
+    poster_text = (invited_by_poster_text_values or "").strip() or None
+    if poster_text in ("", "{}"):
+        poster_text = None
 
     now = datetime.now(timezone.utc).isoformat()
-    invite_payload = {
+    invite_payload: dict[str, Any] = {
         "room_id": room_id,
         "room_name": room_name or "Room",
         "room_key_b64": room_key_b64.strip(),
@@ -105,6 +111,10 @@ async def register_room_membership(
         "member_can_add_members": member_can_add_members,
         "created_at": now,
     }
+    if poster_config:
+        invite_payload["invited_by_poster_config"] = poster_config
+    if poster_text:
+        invite_payload["invited_by_poster_text_values"] = poster_text
     body = json.dumps(invite_payload)
 
     invited: list[str] = []
